@@ -1,0 +1,76 @@
+exclude: >
+    (?x)^(
+      .github/.*|
+      development/ipython_profiles/.*|
+      docs/.*|
+      .*\.md
+    )$
+repos:
+-   repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v2.5.0
+    hooks:
+    -   id: check-docstring-first
+    -   id: check-executables-have-shebangs
+    -   id: check-json
+    -   id: check-merge-conflict
+    -   id: check-yaml
+    -   id: debug-statements
+-   repo: https://github.com/asottile/reorder_python_imports
+    rev: v2.1.0
+    hooks:
+    -   id: reorder-python-imports
+        args: ['--py3-plus']
+-   repo: https://github.com/humitos/mirrors-autoflake
+    rev: v1.1
+    hooks:
+    -   id: autoflake
+        args: ['--in-place', '--remove-duplicate-keys', '--remove-all-unused-imports']
+-   repo: https://github.com/psf/black
+    rev: 19.3b0
+    hooks:
+    -   id: black
+        args: ['--line-length=100']
+-   repo: https://gitlab.com/pycqa/flake8
+    rev: 3.7.9
+    hooks:
+    -   id: flake8
+        additional_dependencies:
+        -   --extra-index-url
+        -   flake8-bugbear==18.8.0
+        -   flake8-comprehensions==1.4.1
+        -   flake8-tidy-imports==1.1.0
+-   repo: https://github.com/asottile/pyupgrade
+    rev: v2.1.0
+    hooks:
+    -   id: pyupgrade
+        args: ['--py36-plus']
+-   repo: https://github.com/pre-commit/pygrep-hooks
+    rev: v1.5.1
+    hooks:
+    -   id: python-use-type-annotations
+    -   id: python-check-mock-methods
+    -   id: python-no-eval
+    -   id: python-no-log-warn
+    -   id: rst-backticks
+-   repo: local
+    hooks:
+    -   id: no-f-strings-without-variables
+        name: no f-strings without variables
+        entry: '\bf"[^{]+"'
+        language: pygrep
+        types: [python]
+-   repo: https://github.com/pre-commit/mirrors-mypy
+    rev: v0.770
+    hooks:
+    -   id: mypy
+-   repo: local
+    hooks:
+    -   id: debug-code
+        name: debug-code
+        description: Don't commit debug code.
+        language: pygrep
+        entry: '(\bprint\(|pdb)'
+        types: [python]
+default_language_version:
+  # force all unspecified python hooks to run python3
+    python: python3

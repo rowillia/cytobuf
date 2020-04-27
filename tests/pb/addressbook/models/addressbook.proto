@@ -1,0 +1,9 @@
+syntax = "proto3";
+
+import "pb/people/models/people.proto";
+
+package pb.addressbook.models;
+
+message AddressBook {
+  repeated pb.people.models.Person people = 1;
+}
