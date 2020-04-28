@@ -3,13 +3,13 @@ import sys
 from google.protobuf.compiler import plugin_pb2
 
 from cytobuf.protoc_gen_cython.cython_file import ProtoFile
-from cytobuf.protoc_gen_cython.templates import pxd_template
+from cytobuf.protoc_gen_cython.templates import externs_pxd_template
 
 
 def write_pxd_file(proto_file: ProtoFile, response: plugin_pb2.CodeGeneratorResponse) -> None:
     output = response.file.add()
-    output.name = proto_file.pxd_filename
-    output.content = pxd_template.render(file=proto_file)
+    output.name = proto_file.extern_pxd_filename
+    output.content = externs_pxd_template.render(file=proto_file)
 
 
 def main():

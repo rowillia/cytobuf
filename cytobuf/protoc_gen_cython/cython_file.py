@@ -18,10 +18,6 @@ from google.protobuf.descriptor_pb2 import FieldDescriptorProto
 from google.protobuf.descriptor_pb2 import FileDescriptorProto
 
 
-STRING_TYPES = {FieldDescriptorProto.TYPE_STRING, FieldDescriptorProto.TYPE_BYTES}
-
-FLOAT_TYPES = {FieldDescriptorProto.TYPE_DOUBLE, FieldDescriptorProto.TYPE_FLOAT}
-
 INT_TYPES = {
     FieldDescriptorProto.TYPE_INT32,
     FieldDescriptorProto.TYPE_UINT32,
@@ -90,15 +86,24 @@ class CImport(NamedTuple):
     module: str
     symbol: str
 
+    @staticmethod
+    def get_extern_module(package: str, filename: str) -> str:
+        module_basename = proto_filename_to_base(os.path.basename(filename))
+        module = f"{package}.{module_basename}_externs"
+        return module
+
 
 class ProtoEnum(NamedTuple):
     name: str
     value_names: List[str]
+    exported: bool
 
     @staticmethod
     def from_enum_descriptor(enum_type: EnumDescriptorProto, prefix: str = "") -> ProtoEnum:
         return ProtoEnum(
-            name=f"{prefix}{enum_type.name}", value_names=[value.name for value in enum_type.value]
+            name=f"{prefix}{enum_type.name}",
+            value_names=[value.name for value in enum_type.value],
+            exported=not prefix,
         )
 
 
@@ -118,21 +123,29 @@ class Field(NamedTuple):
     repeated: bool
     return_type: str
     input_signatures: List[Signature]
-    mutable_return_type: Optional[str] = None
+    python_type: str
 
     @staticmethod
-    def create_string(name: str, repeated: bool = False) -> Field:
+    def _create_string_or_bytes(name: str, python_type: str, repeated: bool = False) -> Field:
         return Field(
             name=name,
             field_type=FieldType.scalar,
             repeated=repeated,
-            mutable_return_type="string*",
             return_type="const string&",
             input_signatures=[
                 Signature(parameters=["const char*"]),
                 Signature(parameters=["const char*", "int index"]),
             ],
+            python_type=python_type,
         )
+
+    @staticmethod
+    def create_string(name: str, repeated: bool = False) -> Field:
+        return Field._create_string_or_bytes(name, "str", repeated)
+
+    @staticmethod
+    def create_bytes(name: str, repeated: bool = False) -> Field:
+        return Field._create_string_or_bytes(name, "bytes", repeated)
 
     @staticmethod
     def create_float(name: str, repeated: bool = False) -> Field:
@@ -142,6 +155,18 @@ class Field(NamedTuple):
             repeated=repeated,
             return_type="float",
             input_signatures=[Signature(parameters=["float"])],
+            python_type="float",
+        )
+
+    @staticmethod
+    def create_double(name: str, repeated: bool = False) -> Field:
+        return Field(
+            name=name,
+            field_type=FieldType.scalar,
+            repeated=repeated,
+            return_type="double",
+            input_signatures=[Signature(parameters=["double"])],
+            python_type="float",
         )
 
     @staticmethod
@@ -153,6 +178,7 @@ class Field(NamedTuple):
             repeated=repeated,
             return_type=f"{prefix}int",
             input_signatures=[Signature(parameters=[f"{prefix}int"])],
+            python_type="int",
         )
 
     @staticmethod
@@ -163,6 +189,7 @@ class Field(NamedTuple):
             repeated=repeated,
             return_type="bool",
             input_signatures=[Signature(parameters=["bool"])],
+            python_type="bool",
         )
 
     @staticmethod
@@ -174,6 +201,7 @@ class Field(NamedTuple):
             repeated=repeated,
             return_type=f"{prefix}long long",
             input_signatures=[Signature(parameters=[f"{prefix}long long"])],
+            python_type="int",
         )
 
     @staticmethod
@@ -184,6 +212,7 @@ class Field(NamedTuple):
             repeated=repeated,
             return_type=enum_type,
             input_signatures=[Signature(parameters=[f"{enum_type} value"])],
+            python_type="int",
         )
 
     @staticmethod
@@ -194,7 +223,7 @@ class Field(NamedTuple):
             repeated=repeated,
             return_type=f"const {message_name}&",
             input_signatures=[],
-            mutable_return_type=f"{message_name}*",
+            python_type=message_name,
         )
 
     @staticmethod
@@ -205,14 +234,18 @@ class Field(NamedTuple):
     ) -> Optional[Field]:
         repeated = field_descriptor.label == FieldDescriptorProto.LABEL_REPEATED
         field_type = field_descriptor.type
-        if field_type in FLOAT_TYPES:
-            return Field.create_float(field_descriptor.name, repeated)
-        elif field_type in INT_TYPES:
+        if field_type in INT_TYPES:
             return Field.create_int(field_descriptor.name, field_type in UNSIGNED_TYPES, repeated)
         elif field_type in LONG_TYPES:
             return Field.create_long(field_descriptor.name, field_type in UNSIGNED_TYPES, repeated)
-        elif field_type in STRING_TYPES:
+        elif field_type == FieldDescriptorProto.TYPE_STRING:
             return Field.create_string(field_descriptor.name, repeated)
+        elif field_type == FieldDescriptorProto.TYPE_BYTES:
+            return Field.create_bytes(field_descriptor.name, repeated)
+        elif field_type == FieldDescriptorProto.TYPE_FLOAT:
+            return Field.create_float(field_descriptor.name, repeated)
+        elif field_type == FieldDescriptorProto.TYPE_DOUBLE:
+            return Field.create_double(field_descriptor.name, repeated)
         elif field_type == FieldDescriptorProto.TYPE_BOOL:
             return Field.create_bool(field_descriptor.name, repeated)
         elif field_type == FieldDescriptorProto.TYPE_ENUM:
@@ -231,16 +264,18 @@ class Field(NamedTuple):
     ) -> ProtoCythonSymbol:
         type_name: str = field_descriptor.type_name
         symbol = fqn_map[type_name]
-        if symbol.file_descriptor.package:
-            module_basename = proto_filename_to_base(os.path.basename(symbol.file_descriptor.name))
-            module = f"{symbol.file_descriptor.package}.{module_basename}"
-            imports.add(CImport(module, symbol.name))
+        dependency_fd = symbol.file_descriptor
+        if dependency_fd.package:
+            module = CImport.get_extern_module(dependency_fd.package, dependency_fd.name)
+            extern_import = CImport(module, symbol.name)
+            imports.add(extern_import)
         return symbol
 
 
 class Class(NamedTuple):
     name: str
     fields: List[Field]
+    exported: bool
 
     @staticmethod
     def from_descriptor(
@@ -259,6 +294,7 @@ class Class(NamedTuple):
                 )
                 if cython_field is not None
             ],
+            exported=not prefix,
         )
 
 
@@ -269,10 +305,18 @@ class ProtoFile(NamedTuple):
     enums: List[ProtoEnum]
     classes: List[Class]
     proto_filename: str
+    proto_package: str
 
     @property
-    def pxd_filename(self):
-        return self.proto_filename[:-6].replace("-", "_").replace(".", "/") + "_pb2.pxd"
+    def extern_pxd_filename(self) -> str:
+        return (
+            proto_filename_to_base(self.proto_filename).replace("-", "_").replace(".", "/")
+            + "_externs.pxd"
+        )
+
+    @property
+    def extern_module(self) -> str:
+        return CImport.get_extern_module(self.proto_package, self.proto_filename)
 
     @staticmethod
     def from_file_descriptor_proto(
@@ -295,6 +339,7 @@ class ProtoFile(NamedTuple):
             enums=enums,
             classes=classes,
             proto_filename=file_descriptor.name,
+            proto_package=file_descriptor.package,
         )
 
     @staticmethod
