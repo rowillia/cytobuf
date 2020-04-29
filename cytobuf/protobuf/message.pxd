@@ -1,3 +1,5 @@
+# distutils: language = c++
+# cython: language_level=3
 from cytobuf.protobuf.common cimport Message as CppMessage
 
 cdef class Message:

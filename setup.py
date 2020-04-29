@@ -1,5 +1,4 @@
-from Cython.Build import cythonize
-from setuptools import find_packages
+from setuptools import find_packages, Extension
 from setuptools import setup
 
 
@@ -12,9 +11,14 @@ setup(
     author_email="roy@lyft.com",
     url="https://github.com/rowillia/protoc-gen-cython",
     packages=find_packages(),
-    ext_modules=cythonize(["cytobuf/protobuf/message.pyx"], language_level="3"),
+    ext_modules=[
+        Extension('cytobuf.protobuf.message', sources=["cytobuf/protobuf/message.pyx"])
+    ],
     include_package_data=True,
-    install_requires=["protobuf", "jinja2", "cython"],
+    setup_requires=[
+        "cython"
+    ],
+    install_requires=["protobuf", "jinja2"],
     entry_points={"console_scripts": ["protoc-gen-cython = cytobuf.protoc_gen_cython:main"]},
     zip_safe=False,
 )

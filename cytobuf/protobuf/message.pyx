@@ -1,4 +1,5 @@
 # distutils: language = c++
+# cython: language_level=3
 # distutils: libraries = protobuf
 # distutils: include_dirs = /usr/local/include
 # distutils: library_dirs = /usr/local/lib

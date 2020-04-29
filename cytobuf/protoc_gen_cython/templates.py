@@ -3,6 +3,7 @@ from jinja2 import Template
 
 
 EXTERNS_PXD_TEMPLATE_SOURCE = """\
+# cython: language_level=3
 # distutils: language = c++
 
 {%- for import in file.imports %}
@@ -52,6 +53,7 @@ externs_pxd_template = Template(EXTERNS_PXD_TEMPLATE_SOURCE)
 
 
 MESSAGE_PXD_TEMPLATE = """\
+# cython: language_level=3
 # distutils: language = c++
 
 from cytobuf.protobuf.message cimport Message
@@ -83,6 +85,7 @@ message_pxd_template = Template(MESSAGE_PXD_TEMPLATE)
 
 
 MESSAGE_PYX_TEMPLATE = """\
+# cython: language_level=3
 # distutils: language = c++
 # distutils: libraries = protobuf
 # distutils: include_dirs = /usr/local/include

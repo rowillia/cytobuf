@@ -62,6 +62,7 @@ def pxd_file():
 def test_extern_pxd_render(pxd_file):
     expected = textwrap.dedent(
         """\
+    # cython: language_level=3
     # distutils: language = c++
     from libcpp.string cimport string
     from pb.address.models._address__cy_pb2_externs cimport Address
@@ -115,6 +116,7 @@ def test_extern_pxd_render(pxd_file):
 def test_message_pxd_render(pxd_file):
     expected = textwrap.dedent(
         """\
+    # cython: language_level=3
     # distutils: language = c++
 
     from cytobuf.protobuf.message cimport Message
@@ -146,6 +148,7 @@ def test_message_pxd_render(pxd_file):
 def test_message_pyx_render(pxd_file):
     expected = textwrap.dedent(
         """\
+        # cython: language_level=3
         # distutils: language = c++
         # distutils: libraries = protobuf
         # distutils: include_dirs = /usr/local/include
