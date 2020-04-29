@@ -6,7 +6,7 @@ EXTERNS_PXD_TEMPLATE_SOURCE = """\
 # distutils: language = c++
 
 {%- for import in file.imports %}
-from {{ import.module }} cimport {{ import.symbol }}
+from {{ import.module.externs_module }} cimport {{ import.symbol }}
 {%- endfor %}
 from cytobuf.protobuf.common cimport Message
 
@@ -56,7 +56,7 @@ MESSAGE_PXD_TEMPLATE = """\
 
 from cytobuf.protobuf.message cimport Message
 {%- for cdef_class in file.classes %}
-from {{ file.extern_module }} cimport {{ cdef_class.name }} as Cpp{{ cdef_class.name }}
+from {{ file.module.externs_module }} cimport {{ cdef_class.name }} as Cpp{{ cdef_class.name }}
 {%- endfor %}
 
 {%- for cdef_class in file.classes %}
@@ -67,7 +67,7 @@ cdef class __{{ cdef_class.name }}__{{ field.name }}__container:
     cdef Cpp{{ cdef_class.name }}* _instance
     {%- endfor %}
 
-cdef cppclass {{ cdef_class.name }}(Message):
+cdef class {{ cdef_class.name }}(Message):
     {%- for field in cdef_class.fields if field.repeated %}
     cdef readonly __{{ cdef_class.name }}__{{ field.name }}__container {{ field.name }}
     {%- endfor %}
@@ -85,20 +85,24 @@ message_pxd_template = Template(MESSAGE_PXD_TEMPLATE)
 MESSAGE_PYX_TEMPLATE = """\
 # distutils: language = c++
 # distutils: libraries = protobuf
-# distutils: include_dirs = /usr/local/include ../cc
+# distutils: include_dirs = /usr/local/include
 # distutils: library_dirs = /usr/local/lib
 # distutils: extra_compile_args= -std=c++11
-# distutils: sources = ../cc/pb/addressbook/models/addressbook.pb.cc
+# distutils: sources = {{ file.cpp_source }}
 
 from cytobuf.protobuf.message cimport Message
+{%- for import in file.imports %}
+from {{ import.module.cython_module }} cimport {{ import.symbol }}
+{%- endfor %}
 {%- for cdef_class in file.classes %}
-from {{ file.extern_module }} cimport {{ cdef_class.name }} as Cpp{{ cdef_class.name }}
+from {{ file.module.externs_module }} cimport {{ cdef_class.name }} as Cpp{{ cdef_class.name }}
 {%- endfor %}
 
 {%- for cdef_class in file.classes %}
     {%- for field in cdef_class.fields if field.repeated %}
 
 cdef class __{{ cdef_class.name }}__{{ field.name }}__container:
+
     def __iter__(self):
         cdef int i
         for i in range(self._instance.{{ field.name }}_size()):
@@ -122,7 +126,11 @@ cdef class __{{ cdef_class.name }}__{{ field.name }}__container:
         {%- endif -%}
     {%- endfor %}
 
-cdef cppclass {{ cdef_class.name }}(Message):
+cdef class {{ cdef_class.name }}(Message):
+    {%- for name in cdef_class.nested_names %}
+    {{ name.name }} = {{ name }}
+    {%- endfor %}
+
     def __cinit__(self, _init = True):
     {%- for field in cdef_class.fields if field.repeated %}
         self.{{ field.name }} = __{{ cdef_class.name }}__{{ field.name }}__container()
@@ -132,7 +140,7 @@ cdef cppclass {{ cdef_class.name }}(Message):
     {%- for field in cdef_class.fields if field.repeated %}
             self.{{ field.name }}._instance = instance
     {%- endfor %}
-            self.internal = instance
+            self._internal = instance
 
     cdef Cpp{{ cdef_class.name }}* _message(self):
         return <Cpp{{ cdef_class.name }}*>self._internal
@@ -142,7 +150,7 @@ cdef cppclass {{ cdef_class.name }}(Message):
         result = {{ cdef_class.name }}(_init=False)
         result._internal = other   
     {%- for field in cdef_class.fields if field.repeated %}
-        result.{{ field.name }}._instance = instance
+        result.{{ field.name }}._instance = other
     {%- endfor %}
         return result
         
@@ -168,3 +176,53 @@ cdef cppclass {{ cdef_class.name }}(Message):
 
 
 message_pyx_template = Template(MESSAGE_PYX_TEMPLATE)
+
+
+PY_MODULE_TEMPLATE = """\
+{%- for import in file.imports if import.module.proto_module %}
+from {{ import.module.python_module }} import {{ import.symbol }}
+{%- endfor %}
+{%- for class in file.classes if class.exported %}
+from {{ file.module.cython_module }} import {{ class.name }}
+{%- endfor %}
+
+__all__ = (
+{%- for class in file.classes if class.exported %}
+    '{{ class.name }}',
+{%- endfor %}
+)
+"""
+
+
+py_module_template = Template(PY_MODULE_TEMPLATE)
+
+
+SETUP_PY_TEMPLATE = """\
+from setuptools import find_packages
+from setuptools import setup
+from Cython.Build import cythonize
+
+
+EXTENSIONS = cythonize(
+    [
+{%- for proto_file in files %}
+        '{{ proto_file.pyx_filename }}',
+{%- endfor %}
+    ],
+    language_level="3",
+)
+
+
+setup(
+    packages=find_packages(),
+    package_data={
+        "": ["*.pxd", "py.typed"]
+    },
+    ext_modules=EXTENSIONS,
+    install_requires=["cytobuf"],
+    zip_safe=False,
+)
+"""
+
+
+setup_py_template = Template(SETUP_PY_TEMPLATE)

@@ -8,6 +8,7 @@
 from libcpp.string cimport string
 
 from cytobuf.protobuf.common cimport MessageDifferencer
+from cytobuf.protobuf.common cimport JsonStringToMessage
 from cytobuf.protobuf.common cimport MessageToJsonString
 
 
@@ -25,6 +26,9 @@ cdef class Message:
         cdef string result = string()
         self._internal.SerializeToString(&result)
         return result
+
+    def from_json(self, value):
+        JsonStringToMessage(value, self._internal)
 
     def to_json(self):
         cdef string result = string()

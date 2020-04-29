@@ -23,4 +23,5 @@ cdef extern from "google/protobuf/stubs/status.h" namespace "google::protobuf::u
 
 
 cdef extern from "google/protobuf/util/json_util.h" namespace "google::protobuf::util":
-    cdef Status MessageToJsonString(const Message &, string* output)
+    cdef Status MessageToJsonString(const Message & message, string* output)
+    cdef Status JsonStringToMessage(const char* input, Message* output)
