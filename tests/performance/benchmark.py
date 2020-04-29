@@ -5,12 +5,17 @@ import linecache
 import random
 import string
 import sys
+from itertools import chain
 from timeit import Timer
 
 from google.protobuf import json_format
+from google.protobuf.internal import api_implementation
 from memory_profiler import LineProfiler
 
 from cytobuf_pb.addressbook.models.addressbook_pb2 import AddressBook as CyAddressBook
+
+sys.path.append('../../scratch/py')
+
 from pb.addressbook.models.addressbook_pb2 import AddressBook as CppAddressBook
 from pb.people.models.people_pb2 import Person as CppPerson
 from pyrobuf_flat_pb import AddressBook as PyroAddressBook
@@ -32,7 +37,7 @@ def run_timeit(function, title, baseline=None):
     result = best_ns * NS_PER_SEC
     speedup_str = ''
     if baseline:
-        speedup_str = f' {baseline/result:, .2f} X Speedup'
+        speedup_str = f' {baseline/result:,.2f} X Speedup'
     print(f'{title}\t{result:,.2f}ns{speedup_str}')
     return result
 
@@ -81,7 +86,7 @@ def benchmark_memory(name, baseline_proto, proto_class, baseline_allocated_memor
             percentage_drop = abs(percentage_drop)
             drop_label = 'Increase'
         comparision_str = f'  ({percentage_drop:,.2f}% {drop_label})'
-    print(f'\t{name} Memory for 5k protos:\t{baseline_allocated_memory:,.2f}MB{comparision_str}')
+    print(f'\t{name} Memory for 5k protos:\t{allocated_memory:,.2f}MB{comparision_str}')
     return allocated_memory
 
 
@@ -107,6 +112,9 @@ def main():
                         help='Comma-seperated list of number of items in the protobuf')
     args = parser.parse_args()
     items = [int(x.strip()) for x in args.items.split(',')]
+    if api_implementation.Type() != 'cpp':
+        print("*** WARNING google.protobuf isn't using the native extension ***")
+
     print('***** Benchmark Results *****')
     for item_count in items:
         print(f'\n{item_count} Items per proto:')
@@ -118,13 +126,12 @@ def main():
         cpp_address_book.ParseFromString(baseline_proto)
         cython_address_book.ParseFromString(baseline_proto)
         pyro_address_book.ParseFromString(baseline_proto)
-        json_str = json_format.MessageToJson(cpp_address_book)
+        json_str = json_format.MessageToJson(cpp_address_book).encode('utf-8')
         py_dict = json.loads(json_str)
         cpp_person = cpp_address_book.people[0]
         cython_person = cython_address_book.people[0]
         pyrobuf_person = pyro_address_book.people[0]
         python_person = py_dict['people'][0]
-
         print('\t*** Compute ***')
         benchmarks = {
             'Parse': {
@@ -140,14 +147,14 @@ def main():
                 'pyrobuf': lambda: pyro_address_book.SerializeToString(),
             },
             'FromJson': {
-                'baseline': lambda: cpp_address_book.FromJsonString(baseline_proto),
-                'cytobuf': lambda: cython_address_book.FromJsonString(baseline_proto),
-                'pyrobuf': lambda: pyro_address_book.FromJsonString(baseline_proto),
+                'baseline': lambda: json_format.Parse(json_str, cpp_address_book),
+                'cytobuf': lambda: cython_address_book.FromJsonString(json_str),
+                'pyrobuf': lambda: pyro_address_book.ParseFromJson(json_str),
             },
             'ToJson': {
-                'baseline': lambda: cpp_address_book.ToJsonString(),
+                'baseline': lambda: json_format.MessageToJson(cpp_address_book),
                 'cytobuf': lambda: cython_address_book.ToJsonString(),
-                'pyrobuf': lambda: pyro_address_book.ToJsonString(),
+                'pyrobuf': lambda: pyro_address_book.SerializeToJson(),
             },
             'Iterate': {
                 'json': lambda: list(py_dict['people']),
@@ -162,18 +169,24 @@ def main():
                 'pyrobuf': lambda: pyrobuf_person.name
             }
         }
+        longest_implementation = len(
+            max(
+                chain.from_iterable([[keys for keys in variant.keys()] for variant in benchmarks.values()]),
+                key=len
+            )
+        )
         for title, variants in benchmarks.items():
-            print(f"\t{title}")
+            print(f"\t{title}:")
             baseline = None
             for implementation, function in variants.items():
-                result = run_timeit(function, f'\t\t{implementation}', baseline)
+                result = run_timeit(function, f'\t\t{implementation.ljust(longest_implementation)}', baseline)
                 if implementation == 'baseline':
                     baseline = result
 
         print('\n\t*** Memory ***')
         baseline = benchmark_memory('baseline', baseline_proto, CppAddressBook)
-        benchmark_memory('cytobuf', baseline_proto, CyAddressBook, baseline)
-        benchmark_memory('pyrobuf', baseline_proto, PyroAddressBook, baseline)
+        benchmark_memory('cytobuf ', baseline_proto, CyAddressBook, baseline)
+        benchmark_memory('pyrobuf ', baseline_proto, PyroAddressBook, baseline)
 
 
 if __name__ == "__main__":

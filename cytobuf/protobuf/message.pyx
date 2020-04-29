@@ -28,8 +28,8 @@ cdef class Message:
         self._internal.SerializeToString(&result)
         return result
 
-    def FromJsonString(self, value):
-        JsonStringToMessage(value, self._internal)
+    def FromJsonString(self, bytes data):
+        JsonStringToMessage(data, self._internal)
 
     def ToJsonString(self):
         cdef string result = string()

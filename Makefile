@@ -19,8 +19,9 @@ cy: scratch install
 	mkdir -p scratch/cy
 	( \
 		source venv/bin/activate; \
-        cd ./tests; \
-        pyrobuf pb/flat_addressbook.proto --install --package=pyrobuf_flat_pb; \
+		cd ./scratch; \
+        pyrobuf ../tests/pb/flat_addressbook.proto --install --package=pyrobuf_flat_pb; \
+        cd ../tests; \
         protoc -I. --cython_out=../scratch/cy --cpp_out=../scratch/cy --cython_opt="--prefix=cytobuf_" $(proto_files); \
 		cd ../scratch/cy; \
 		python -m pip install .; \
