@@ -139,7 +139,7 @@ cdef class __{{ cdef_class.name }}__{{ field.name }}__container:
             if not 0 <= index < size:
                 raise IndexError(f"list index ({key}) out of range")
         {%- if field.field_type.name == 'message' %}
-            return {{ field.python_type }}.from_cpp(self._instance.mutable_{{ field.name }}(key))
+            return {{ field.python_type }}.from_cpp(self._instance.mutable_{{ field.name }}(index))
         {%- else %}
             return self._instance.{{ field.name }}(key)
         {%- endif %}
@@ -166,9 +166,6 @@ cdef class __{{ cdef_class.name }}__{{ field.name }}__container:
     {%- endfor %}
 
 cdef class {{ cdef_class.name }}(Message):
-    {%- for name in cdef_class.nested_names %}
-    {{ name.name }} = {{ name }}
-    {%- endfor %}
 
     def __cinit__(self, _init = True):
     {%- for field in cdef_class.fields if field.repeated %}
@@ -226,11 +223,40 @@ PY_MODULE_TEMPLATE = """\
 {%- for import in file.imports if import.module.proto_module %}
 from {{ import.module.python_module }} import {{ import.symbol }}
 {%- endfor %}
-{%- for class in file.classes if class.exported %}
-from {{ file.module.cython_module }} import {{ class.name }}
+{%- for enum in file.enums %}
+from {{ file.module.cython_module }} import {{ enum.name }} as {{ enum.name }}
+{%- endfor %}
+{%- for class in file.classes %}
+from {{ file.module.cython_module }} import {{ class.name }} as _Cy_{{ class.name }}
+{%- endfor %}
+
+{%- for class in file.classes %}
+    {%- if class.nested_names %}
+
+class {{ class.name }}(_Cy_{{ class.name }}):
+        {%- for name in class.nested_names %}
+    {{ name.name }} = {{ name }}
+        {%- endfor %}
+    {%- else %}
+
+{{ class.name }} = _Cy_{{ class.name }}
+    {%- endif %}
+{%- endfor %}
+
+{%- for enum in file.enums if not enum.exported %}
+del {{ enum.name }}
+{%- endfor %}
+{%- for class in file.classes %}
+del _Cy_{{ class.name }}
+     {%- if not class.nested_names and not class.exported %}
+del {{ class.name }}
+     {%- endif %}
 {%- endfor %}
 
 __all__ = (
+{%- for enum in file.enums if enum.exported %}
+    '{{ enum.name }}',
+{%- endfor %}
 {%- for class in file.classes if class.exported %}
     '{{ class.name }}',
 {%- endfor %}

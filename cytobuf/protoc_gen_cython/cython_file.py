@@ -86,11 +86,12 @@ class Module(NamedTuple):
     module_basename: str
     package: str = ""
     proto_module: bool = False
+    output_prefix: str = ""
 
     @property
     def prefix(self):
         prefix = f"{self.package}." if self.package else ""
-        return prefix
+        return f"{self.output_prefix}{prefix}"
 
     @property
     def cython_module(self):
@@ -109,11 +110,17 @@ class Module(NamedTuple):
         return self.cython_module
 
     @staticmethod
-    def from_package_and_file(package: str, filename: str) -> Module:
+    def from_package_and_file(package: str, filename: str, output_prefix: str) -> Module:
         module_basename = (
             proto_filename_to_base(os.path.basename(filename)).replace("-", "_").replace(".", "/")
         )
-        return Module(package=package, module_basename=module_basename, proto_module=True)
+        result = Module(
+            package=package,
+            module_basename=module_basename,
+            proto_module=True,
+            output_prefix=output_prefix,
+        )
+        return result
 
 
 class CImport(NamedTuple):
@@ -267,6 +274,7 @@ class Field(NamedTuple):
         field_descriptor: FieldDescriptorProto,
         fqn_map: Dict[str, ProtoCythonSymbol],
         imports: Set[CImport],
+        output_prefix: str,
     ) -> Optional[Field]:
         repeated = field_descriptor.label == FieldDescriptorProto.LABEL_REPEATED
         field_type = field_descriptor.type
@@ -285,10 +293,10 @@ class Field(NamedTuple):
         elif field_type == FieldDescriptorProto.TYPE_BOOL:
             return Field.create_bool(field_descriptor.name, repeated)
         elif field_type == FieldDescriptorProto.TYPE_ENUM:
-            symbol = Field.add_import(field_descriptor, fqn_map, imports)
+            symbol = Field.add_import(field_descriptor, fqn_map, imports, output_prefix)
             return Field.create_enum(field_descriptor.name, symbol.name, repeated)
         elif field_type == FieldDescriptorProto.TYPE_MESSAGE:
-            symbol = Field.add_import(field_descriptor, fqn_map, imports)
+            symbol = Field.add_import(field_descriptor, fqn_map, imports, output_prefix)
             return Field.create_message(field_descriptor.name, symbol.name, repeated)
         return None
 
@@ -297,12 +305,15 @@ class Field(NamedTuple):
         field_descriptor: FieldDescriptorProto,
         fqn_map: Dict[str, ProtoCythonSymbol],
         imports: Set[CImport],
+        output_prefix: str,
     ) -> ProtoCythonSymbol:
         type_name: str = field_descriptor.type_name
         symbol = fqn_map[type_name]
         dependency_fd = symbol.file_descriptor
         if dependency_fd.package:
-            module = Module.from_package_and_file(dependency_fd.package, dependency_fd.name)
+            module = Module.from_package_and_file(
+                dependency_fd.package, dependency_fd.name, output_prefix=output_prefix
+            )
             imports.add(CImport(module, symbol.name))
         return symbol
 
@@ -319,14 +330,15 @@ class Class(NamedTuple):
         fqn_map: Dict[str, ProtoCythonSymbol],
         imports: Set[CImport],
         nested_names: List[Name],
-        prefix: str = "",
+        prefix: str,
+        output_prefix: str,
     ) -> Class:
         return Class(
             name=Name(prefix, descriptor.name),
             fields=[
                 cython_field
                 for cython_field in (
-                    Field.from_field_descriptor(field, fqn_map, imports)
+                    Field.from_field_descriptor(field, fqn_map, imports, output_prefix)
                     for field in descriptor.field
                 )
                 if cython_field is not None
@@ -343,6 +355,7 @@ class ProtoFile(NamedTuple):
     classes: List[Class]
     proto_filename: str
     proto_package: str
+    output_prefix: str
 
     @property
     def extern_pxd_filename(self) -> str:
@@ -362,7 +375,9 @@ class ProtoFile(NamedTuple):
 
     @property
     def module(self) -> Module:
-        return Module.from_package_and_file(self.proto_package, self.proto_filename)
+        return Module.from_package_and_file(
+            self.proto_package, self.proto_filename, self.output_prefix
+        )
 
     @property
     def cpp_header(self):
@@ -374,7 +389,9 @@ class ProtoFile(NamedTuple):
 
     @staticmethod
     def from_file_descriptor_proto(
-        file_descriptor: FileDescriptorProto, fqn_map: Dict[str, ProtoCythonSymbol]
+        file_descriptor: FileDescriptorProto,
+        fqn_map: Dict[str, ProtoCythonSymbol],
+        output_prefix: str,
     ) -> ProtoFile:
         namespace = file_descriptor.package.split(".")
         classes: List[Class] = []
@@ -383,8 +400,10 @@ class ProtoFile(NamedTuple):
             ProtoEnum.from_enum_descriptor(enum_type) for enum_type in file_descriptor.enum_type
         ]
         for descriptor in file_descriptor.message_type:
-            ProtoFile._add_class(descriptor, fqn_map, classes, enums, imports)
-        current_module = Module.from_package_and_file(file_descriptor.package, file_descriptor.name)
+            ProtoFile._add_class(descriptor, fqn_map, classes, enums, imports, "", output_prefix)
+        current_module = Module.from_package_and_file(
+            file_descriptor.package, file_descriptor.name, output_prefix=output_prefix
+        )
         filtered_imports = sorted(imp for imp in imports if imp.module != current_module)
         return ProtoFile(
             imports=filtered_imports,
@@ -393,15 +412,18 @@ class ProtoFile(NamedTuple):
             classes=classes,
             proto_filename=file_descriptor.name,
             proto_package=file_descriptor.package,
+            output_prefix=output_prefix,
         )
 
     @staticmethod
     def from_file_descriptor_protos(
-        file_descriptors: Iterable[FileDescriptorProto], files_to_generate: Set[str]
+        file_descriptors: Iterable[FileDescriptorProto],
+        files_to_generate: Set[str],
+        output_prefix: str,
     ) -> List[ProtoFile]:
         fqn_map = ProtoCythonSymbol.build_fqn_to_symbol_map(file_descriptors)
         return [
-            ProtoFile.from_file_descriptor_proto(descriptor, fqn_map)
+            ProtoFile.from_file_descriptor_proto(descriptor, fqn_map, output_prefix)
             for descriptor in file_descriptors
             if descriptor.name in files_to_generate
         ]
@@ -413,7 +435,8 @@ class ProtoFile(NamedTuple):
         classes: List[Class],
         enums: List[ProtoEnum],
         imports: Set[CImport],
-        path: str = "",
+        path: str,
+        output_prefix: str,
     ) -> Class:
         nested_names: List[Name] = []
         embedded_path = (
@@ -421,7 +444,7 @@ class ProtoFile(NamedTuple):
         ) + "_"
         for nested_class in class_descriptor.nested_type:
             new_class = ProtoFile._add_class(
-                nested_class, fqn_map, classes, enums, imports, embedded_path
+                nested_class, fqn_map, classes, enums, imports, embedded_path, output_prefix
             )
             nested_names.append(new_class.name)
         nested_enums = [
@@ -430,6 +453,8 @@ class ProtoFile(NamedTuple):
         ]
         enums.extend(nested_enums)
         nested_names.extend(enum.name for enum in nested_enums)
-        new_class = Class.from_descriptor(class_descriptor, fqn_map, imports, nested_names, path)
+        new_class = Class.from_descriptor(
+            class_descriptor, fqn_map, imports, nested_names, path, output_prefix
+        )
         classes.append(new_class)
         return new_class

@@ -2,7 +2,6 @@ from setuptools import find_packages
 from setuptools import setup
 from Cython.Build import cythonize
 
-
 setup(
     name="cytobuf",
     version="0.1",

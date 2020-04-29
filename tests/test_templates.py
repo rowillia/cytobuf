@@ -228,7 +228,7 @@ def test_message_pyx_render(pxd_file):
                         index = size + index
                     if not 0 <= index < size:
                         raise IndexError(f"list index ({key}) out of range")
-                    return Person_PhoneNumber.from_cpp(self._instance.mutable_phones(key))
+                    return Person_PhoneNumber.from_cpp(self._instance.mutable_phones(index))
                 else:
                     start, stop, step = key.indices(size)
                     return [
@@ -240,7 +240,6 @@ def test_message_pyx_render(pxd_file):
                 return Person_PhoneNumber.from_cpp(self._instance.add_phones())
 
         cdef class Person(Message):
-            PhoneNumber = Person_PhoneNumber
 
             def __cinit__(self, _init = True):
                 self.phones = __Person__phones__container()
@@ -312,7 +311,18 @@ def test_py_module_render(pxd_file):
     expected = textwrap.dedent(
         """\
         from pb.address.models.address_pb2 import Address
-        from pb.people.models._people__cy_pb2 import Person
+        from pb.people.models._people__cy_pb2 import Person_PhoneType as Person_PhoneType
+        from pb.people.models._people__cy_pb2 import Person_PhoneNumber as _Cy_Person_PhoneNumber
+        from pb.people.models._people__cy_pb2 import Person as _Cy_Person
+
+        Person_PhoneNumber = _Cy_Person_PhoneNumber
+
+        class Person(_Cy_Person):
+            PhoneNumber = Person_PhoneNumber
+        del Person_PhoneType
+        del _Cy_Person_PhoneNumber
+        del Person_PhoneNumber
+        del _Cy_Person
 
         __all__ = (
             'Person',
@@ -329,7 +339,7 @@ def test_setup_py_render(pxd_file):
         from setuptools import find_packages
         from setuptools import setup
         from Cython.Build import cythonize
-        
+
 
         EXTENSIONS = cythonize(
             [
@@ -337,8 +347,8 @@ def test_setup_py_render(pxd_file):
             ],
             language_level="3",
         )
-        
-        
+
+
         setup(
             packages=find_packages(),
             package_data={

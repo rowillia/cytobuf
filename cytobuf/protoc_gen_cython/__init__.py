@@ -1,3 +1,4 @@
+import argparse
 import os
 import sys
 from typing import List
@@ -43,12 +44,16 @@ def write_module(proto_files: List[ProtoFile], response: plugin_pb2.CodeGenerato
 
 
 def main():
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--prefix", type=str, default="")
     data = sys.stdin.buffer.read()
     request = plugin_pb2.CodeGeneratorRequest()
     request.ParseFromString(data)
+    args = parser.parse_args(request.parameter.split())
+
     response = plugin_pb2.CodeGeneratorResponse()
     cython_files = ProtoFile.from_file_descriptor_protos(
-        request.proto_file, set(request.file_to_generate)
+        request.proto_file, set(request.file_to_generate), args.prefix
     )
     write_module(cython_files, response)
     sys.stdout.buffer.write(response.SerializeToString())
