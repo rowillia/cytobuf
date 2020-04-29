@@ -1,5 +1,5 @@
-# distutils: language = c++
 # cython: language_level=3
+# distutils: language = c++
 # distutils: libraries = protobuf
 # distutils: include_dirs = /usr/local/include
 # distutils: library_dirs = /usr/local/lib
@@ -28,10 +28,10 @@ cdef class Message:
         self._internal.SerializeToString(&result)
         return result
 
-    def from_json(self, value):
+    def FromJsonString(self, value):
         JsonStringToMessage(value, self._internal)
 
-    def to_json(self):
+    def ToJsonString(self):
         cdef string result = string()
         MessageToJsonString(self._internal[0], &result)
         return result

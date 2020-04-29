@@ -10,10 +10,11 @@ from cytobuf.protoc_gen_cython.cython_file import Module
 from cytobuf.protoc_gen_cython.cython_file import Name
 from cytobuf.protoc_gen_cython.cython_file import ProtoEnum
 from cytobuf.protoc_gen_cython.cython_file import ProtoFile
-from cytobuf.protoc_gen_cython.templates import externs_pxd_template, setup_py_template
+from cytobuf.protoc_gen_cython.templates import externs_pxd_template
 from cytobuf.protoc_gen_cython.templates import message_pxd_template
 from cytobuf.protoc_gen_cython.templates import message_pyx_template
 from cytobuf.protoc_gen_cython.templates import py_module_template
+from cytobuf.protoc_gen_cython.templates import setup_py_template
 
 
 @pytest.fixture
@@ -120,8 +121,14 @@ def test_message_pxd_render(pxd_file):
     # distutils: language = c++
 
     from cytobuf.protobuf.message cimport Message
+    from pb.people.models._people__cy_pb2_externs cimport Person_PhoneType as CppPerson_PhoneType
     from pb.people.models._people__cy_pb2_externs cimport Person_PhoneNumber as CppPerson_PhoneNumber
     from pb.people.models._people__cy_pb2_externs cimport Person as CppPerson
+
+    cpdef enum Person_PhoneType:
+        MOBILE = CppPerson_PhoneType.Person_PhoneType_MOBILE,
+        HOME = CppPerson_PhoneType.Person_PhoneType_HOME,
+        WORK = CppPerson_PhoneType.Person_PhoneType_WORK,
 
     cdef class Person_PhoneNumber(Message):
         cdef CppPerson_PhoneNumber* _message(self)
@@ -151,7 +158,7 @@ def test_message_pyx_render(pxd_file):
         # cython: language_level=3
         # distutils: language = c++
         # distutils: libraries = protobuf
-        # distutils: include_dirs = /usr/local/include
+        # distutils: include_dirs = /usr/local/include .
         # distutils: library_dirs = /usr/local/lib
         # distutils: extra_compile_args= -std=c++11
         # distutils: sources = pb/people/models/people.pb.cc
@@ -186,13 +193,21 @@ def test_message_pyx_render(pxd_file):
             def number(self, str value):
                 self._message().set_number(value.encode('utf-8'))
 
+            @number.deleter
+            def number(self):
+                self._message().clear_number()
+
             @property
             def type(self):
                 return self._message().type()
 
             @type.setter
-            def type(self, int value):
+            def type(self, Person_PhoneType value):
                 self._message().set_type(value)
+
+            @type.deleter
+            def type(self):
+                self._message().clear_type()
 
         cdef class __Person__phones__container:
 
@@ -203,6 +218,23 @@ def test_message_pyx_render(pxd_file):
 
             def __len__(self):
                 return self._instance.phones_size()
+
+            def __getitem__(self, key):
+                cdef int size, index, start, stop, step
+                size = self._instance.phones_size()
+                if isinstance(key, int):
+                    index = key
+                    if index < 0:
+                        index = size + index
+                    if not 0 <= index < size:
+                        raise IndexError(f"list index ({key}) out of range")
+                    return Person_PhoneNumber.from_cpp(self._instance.mutable_phones(key))
+                else:
+                    start, stop, step = key.indices(size)
+                    return [
+                        Person_PhoneNumber.from_cpp(self._instance.mutable_phones(index))
+                        for index in range(start, stop, step)
+                    ]
 
             def add(self):
                 return Person_PhoneNumber.from_cpp(self._instance.add_phones())
@@ -235,6 +267,10 @@ def test_message_pyx_render(pxd_file):
             def name(self, str value):
                 self._message().set_name(value.encode('utf-8'))
 
+            @name.deleter
+            def name(self):
+                self._message().clear_name()
+
             @property
             def id(self):
                 return self._message().id()
@@ -242,6 +278,10 @@ def test_message_pyx_render(pxd_file):
             @id.setter
             def id(self, int value):
                 self._message().set_id(value)
+
+            @id.deleter
+            def id(self):
+                self._message().clear_id()
 
             @property
             def email(self):
@@ -251,9 +291,17 @@ def test_message_pyx_render(pxd_file):
             def email(self, str value):
                 self._message().set_email(value.encode('utf-8'))
 
+            @email.deleter
+            def email(self):
+                self._message().clear_email()
+
             @property
             def address(self):
                 return Address.from_cpp(self._instance.mutable_address())
+
+            @address.deleter
+            def address(self):
+                self._message().clear_address()
     """
     )
     actual = message_pyx_template.render(file=pxd_file)
@@ -282,7 +330,7 @@ def test_setup_py_render(pxd_file):
         from setuptools import setup
         from Cython.Build import cythonize
         
-                
+
         EXTENSIONS = cythonize(
             [
                 'pb/people/models/_people__cy_pb2.pyx',
@@ -303,5 +351,4 @@ def test_setup_py_render(pxd_file):
         """
     )
     actual = setup_py_template.render(files=[pxd_file])
-    print(actual)
     assert expected.strip() == actual.strip()

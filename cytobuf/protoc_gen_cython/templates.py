@@ -57,8 +57,19 @@ MESSAGE_PXD_TEMPLATE = """\
 # distutils: language = c++
 
 from cytobuf.protobuf.message cimport Message
+{%- for cdef_enum in file.enums %}
+from {{ file.module.externs_module }} cimport {{ cdef_enum.name }} as Cpp{{ cdef_enum.name }}
+{%- endfor %}
 {%- for cdef_class in file.classes %}
 from {{ file.module.externs_module }} cimport {{ cdef_class.name }} as Cpp{{ cdef_class.name }}
+{%- endfor %}
+
+{%- for enum in file.enums %}
+
+cpdef enum {{ enum.name }}:
+{%- for value in enum.value_names %}
+    {{ value }} = Cpp{{ enum.name }}.{{ enum.name }}_{{ value }},
+{%- endfor %}
 {%- endfor %}
 
 {%- for cdef_class in file.classes %}
@@ -88,7 +99,7 @@ MESSAGE_PYX_TEMPLATE = """\
 # cython: language_level=3
 # distutils: language = c++
 # distutils: libraries = protobuf
-# distutils: include_dirs = /usr/local/include
+# distutils: include_dirs = /usr/local/include .
 # distutils: library_dirs = /usr/local/lib
 # distutils: extra_compile_args= -std=c++11
 # distutils: sources = {{ file.cpp_source }}
@@ -117,6 +128,31 @@ cdef class __{{ cdef_class.name }}__{{ field.name }}__container:
 
     def __len__(self):
         return self._instance.{{ field.name }}_size()
+
+    def __getitem__(self, key):
+        cdef int size, index, start, stop, step
+        size = self._instance.{{ field.name }}_size()
+        if isinstance(key, int):
+            index = key
+            if index < 0:
+                index = size + index
+            if not 0 <= index < size:
+                raise IndexError(f"list index ({key}) out of range")
+        {%- if field.field_type.name == 'message' %}
+            return {{ field.python_type }}.from_cpp(self._instance.mutable_{{ field.name }}(key))
+        {%- else %}
+            return self._instance.{{ field.name }}(key)
+        {%- endif %}
+        else:
+            start, stop, step = key.indices(size)
+            return [
+        {%- if field.field_type.name == 'message' %}
+                {{ field.python_type }}.from_cpp(self._instance.mutable_{{ field.name }}(index))
+        {%- else %}
+                self._instance.{{ field.name }}(index)
+        {%- endif %}
+                for index in range(start, stop, step)
+            ]
 
         {%- if field.field_type.name == 'message' %}
 
@@ -172,7 +208,12 @@ cdef class {{ cdef_class.name }}(Message):
     @property
     def {{ field.name }}(self):
         return {{ field.python_type }}.from_cpp(self._instance.mutable_{{ field.name }}())
-        {%- endif -%}
+        {%- endif %}
+
+    @{{ field.name }}.deleter
+    def {{ field.name }}(self):
+        self._message().clear_{{ field.name }}()
+        {%- else %}
     {%- endfor %}
 {%- endfor %}
 """

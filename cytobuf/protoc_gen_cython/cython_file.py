@@ -248,7 +248,7 @@ class Field(NamedTuple):
             repeated=repeated,
             return_type=enum_type,
             input_signatures=[Signature(parameters=[f"{enum_type} value"])],
-            python_type="int",
+            python_type=enum_type,
         )
 
     @staticmethod
@@ -429,7 +429,7 @@ class ProtoFile(NamedTuple):
             for nested_enum in class_descriptor.enum_type
         ]
         enums.extend(nested_enums)
-        # nested_names.extend(enum.name for enum in nested_enums)
+        nested_names.extend(enum.name for enum in nested_enums)
         new_class = Class.from_descriptor(class_descriptor, fqn_map, imports, nested_names, path)
         classes.append(new_class)
         return new_class
