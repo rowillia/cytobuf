@@ -158,7 +158,7 @@ cdef class __{{ cdef_class.name }}__{{ field.name }}__container:
 
     def add(self):
         return {{ field.python_type }}.from_cpp(self._instance.add_{{ field.name }}())
-        {%- else -%}
+        {%- else %}
 
     def add(self, value):
         self._instance.add_{{ field.name }}(value)

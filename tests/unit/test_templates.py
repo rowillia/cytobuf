@@ -22,7 +22,9 @@ def pxd_file():
     return ProtoFile(
         imports=[
             CImport(Module(package="libcpp", module_basename="string"), "string"),
-            CImport(Module.from_package_and_file("pb.address.models", "address.proto", ""), "Address"),
+            CImport(
+                Module.from_package_and_file("pb.address.models", "address.proto", ""), "Address"
+            ),
         ],
         proto_filename="pb/people/models/people.proto",
         proto_package="pb.people.models",

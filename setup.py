@@ -1,6 +1,6 @@
 from setuptools import find_packages
 from setuptools import setup
-from Cython.Build import cythonize
+from Cython.Build import cythonize  # noreorder
 
 setup(
     name="cytobuf",

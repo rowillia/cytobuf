@@ -37,8 +37,8 @@ LONG_TYPES = {
 UNSIGNED_TYPES = {
     FieldDescriptorProto.TYPE_UINT64,
     FieldDescriptorProto.TYPE_UINT32,
-    FieldDescriptorProto.TYPE_SFIXED64,
-    FieldDescriptorProto.TYPE_SFIXED32,
+    FieldDescriptorProto.TYPE_FIXED32,
+    FieldDescriptorProto.TYPE_FIXED64,
 }
 
 
@@ -209,7 +209,7 @@ class Field(NamedTuple):
             repeated=repeated,
             return_type="double",
             input_signatures=[Signature(parameters=["double"])],
-            python_type="float",
+            python_type="double",
         )
 
     @staticmethod
@@ -221,7 +221,7 @@ class Field(NamedTuple):
             repeated=repeated,
             return_type=f"{prefix}int",
             input_signatures=[Signature(parameters=[f"{prefix}int"])],
-            python_type="int",
+            python_type=f"{prefix}int",
         )
 
     @staticmethod
@@ -230,9 +230,9 @@ class Field(NamedTuple):
             name=name,
             field_type=FieldType.scalar,
             repeated=repeated,
-            return_type="bool",
-            input_signatures=[Signature(parameters=["bool"])],
-            python_type="bool",
+            return_type="bint",
+            input_signatures=[Signature(parameters=["bint"])],
+            python_type="bint",
         )
 
     @staticmethod
@@ -244,7 +244,7 @@ class Field(NamedTuple):
             repeated=repeated,
             return_type=f"{prefix}long long",
             input_signatures=[Signature(parameters=[f"{prefix}long long"])],
-            python_type="int",
+            python_type=f"{prefix}long long",
         )
 
     @staticmethod
