@@ -22,10 +22,11 @@ def pxd_file():
     return ProtoFile(
         imports=[
             CImport(Module(package="libcpp", module_basename="string"), "string"),
-            CImport(Module.from_package_and_file("pb.address.models", "address.proto"), "Address"),
+            CImport(Module.from_package_and_file("pb.address.models", "address.proto", ""), "Address"),
         ],
         proto_filename="pb/people/models/people.proto",
         proto_package="pb.people.models",
+        output_prefix="",
         namespace=["pb", "people", "models"],
         enums=[
             ProtoEnum(
@@ -323,6 +324,7 @@ def test_py_module_render(pxd_file):
         del _Cy_Person_PhoneNumber
         del Person_PhoneNumber
         del _Cy_Person
+        del Address
 
         __all__ = (
             'Person',

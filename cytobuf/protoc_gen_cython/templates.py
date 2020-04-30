@@ -252,6 +252,9 @@ del _Cy_{{ class.name }}
 del {{ class.name }}
      {%- endif %}
 {%- endfor %}
+{%- for import in file.imports if import.module.proto_module %}
+del {{ import.symbol }}
+{%- endfor %}
 
 __all__ = (
 {%- for enum in file.enums if enum.exported %}

@@ -108,7 +108,7 @@ def build_baseline_proto(item_count):
 def main():
     parser = argparse.ArgumentParser(
         description='Runs a benchmark of Marshmallow.')
-    parser.add_argument('--items', type=str, default='1,10,100,1000',
+    parser.add_argument('--items', type=str, default='1,10,100',
                         help='Comma-seperated list of number of items in the protobuf')
     args = parser.parse_args()
     items = [int(x.strip()) for x in args.items.split(',')]

@@ -34,7 +34,7 @@ cdef class Message:
     def ToJsonString(self):
         cdef string result = string()
         MessageToJsonString(self._internal[0], &result)
-        return result
+        return result.decode('utf-8')
 
     def ParseFromString(self, bytes data):
         self._internal.ParseFromString(data)
