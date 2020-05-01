@@ -39,6 +39,9 @@ cdef class Message:
     def ParseFromString(self, bytes data):
         self._internal.ParseFromString(data)
 
+    def Clear(self):
+        self._internal.Clear()
+
     def __repr__(self):
         return self.DebugString()
 

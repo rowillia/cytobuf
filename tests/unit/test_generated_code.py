@@ -32,6 +32,7 @@ def test_enum():
     assert [e.value for e in phone_type] == [0, 1, 2]
     assert phone_type.MOBILE == 0
     assert phone_type.HOME == 1
+    assert phone_type.WORK == 2
 
 
 @pytest.mark.parametrize("value", [1, people_pb2.Person.PhoneType.HOME])
@@ -42,6 +43,8 @@ def test_set_enum(value):
     assert new_phone.type == people_pb2.Person.PhoneType.HOME
     assert new_phone.type == 1
     assert new_phone.ToJsonString() == '{"type":"HOME"}'
+    del new_phone.type
+    assert new_phone.type == people_pb2.Person.PhoneType.MOBILE
 
 
 def test_string():
@@ -51,6 +54,8 @@ def test_string():
     person.name = "bob"
     assert isinstance(person.name, str)
     assert person.name == "bob"
+    with pytest.raises(TypeError):
+        person.name = b"\xc3\x28"
     assert json.loads(person.ToJsonString()) == {"name": "bob"}
 
 
@@ -64,6 +69,8 @@ def test_bytes():
     test_type.bytes_value = b"\xc3\x28"
     assert test_type.bytes_value == b"\xc3\x28"
     assert len(test_type.bytes_value) == 2
+    del test_type.bytes_value
+    assert test_type.bytes_value == b""
 
 
 def test_bool():
@@ -71,6 +78,8 @@ def test_bool():
     assert test_type.bool_value is False
     test_type.bool_value = True
     assert test_type.bool_value is True
+    del test_type.bool_value
+    assert test_type.bool_value is False
 
 
 @pytest.mark.parametrize(
@@ -105,6 +114,8 @@ def test_int32(int_type, signed, bits):
         assert getattr(test_type, f"{int_type}_value") == (1 << bits) - 1
         with pytest.raises(OverflowError):
             setattr(test_type, f"{int_type}_value", -1)
+    delattr(test_type, f"{int_type}_value")
+    assert getattr(test_type, f"{int_type}_value") == 0
 
 
 @pytest.mark.parametrize("float_type", ["float", "double"])
@@ -128,7 +139,42 @@ def test_string_unicode():
     assert json.loads(person.ToJsonString()) == {"name": "\U0001f600lol"}
 
 
-def test_repeated_access():
+def test_repeated_string():
+    test_type = type_test_pb2.TypeTester()
+    assert len(test_type.repeated_string_value) == 0
+    test_type.repeated_string_value.add("hello world")
+    assert len(test_type.repeated_string_value) == 1
+    assert list(test_type.repeated_string_value) == ["hello world"]
+
+
+def test_repeated_int32():
+    test_type = type_test_pb2.TypeTester()
+    assert len(test_type.repeated_int32_value) == 0
+    test_type.repeated_int32_value.add(42)
+    assert len(test_type.repeated_int32_value) == 1
+    test_type.repeated_int32_value.add(3.14)
+    assert len(test_type.repeated_int32_value) == 2
+    assert list(test_type.repeated_int32_value) == [42, 3]
+    assert test_type.repeated_int32_value[:] == [42, 3]
+    assert test_type.repeated_int32_value[:1] == [42]
+
+
+def test_repeated_string_slice():
+    test_type = type_test_pb2.TypeTester()
+    expected = ["x" * i for i in range(100)]
+    for i in range(100):
+        test_type.repeated_string_value.add(expected[i])
+    assert len(test_type.repeated_string_value) == 100
+    assert test_type.repeated_string_value[-1] == "x" * 99
+    assert test_type.repeated_string_value[-99] == "x"
+    assert test_type.repeated_string_value[0:2] == ["", "x"]
+    assert test_type.repeated_string_value[:] == expected
+    assert test_type.repeated_string_value[::] == expected
+    assert test_type.repeated_string_value[-100:1000:] == expected
+    assert test_type.repeated_string_value[3:-1:7] == expected[3:-1:7]
+
+
+def test_repeated_message_access():
     addressbook = addressbook_pb2.AddressBook()
     assert len(addressbook.people) == 0
     assert list(addressbook.people) == []
@@ -145,7 +191,7 @@ def test_repeated_access():
     assert addressbook.people[-2].name == "bob"
 
 
-def test_repeated_slice():
+def test_repeated_message_slice():
     addressbook = addressbook_pb2.AddressBook()
     person = addressbook.people.add()
     for x in range(10):
@@ -175,3 +221,34 @@ def test_repeated_slice():
         ]
     }
     assert json.loads(addressbook.ToJsonString()) == expected
+
+
+def test_map_scalar_value():
+    test_type = type_test_pb2.TypeTester()
+    assert len(test_type.map_to_int32_value) == 0
+    assert "lol" not in test_type.map_to_int32_value
+    assert test_type.map_to_int32_value["lol"] == 0
+    assert "lol" not in test_type.map_to_int32_value
+    test_type.map_to_int32_value["lol"] = 42
+    assert "lol" in test_type.map_to_int32_value
+    assert len(test_type.map_to_int32_value) == 1
+    assert test_type.map_to_int32_value["lol"] == 42
+    assert list(test_type.map_to_int32_value) == ["lol"]
+
+
+def test_map_message_value():
+    test_type = type_test_pb2.TypeTester()
+    assert len(test_type.map_to_submessage_value) == 0
+    assert "foo" not in test_type.map_to_submessage_value
+    test_type.map_to_submessage_value["foo"].value = "hi"
+    assert "foo" in test_type.map_to_submessage_value
+    assert test_type.map_to_submessage_value["foo"].value == "hi"
+    bar = test_type.map_to_submessage_value["bar"]
+    test_type.map_to_submessage_value["bar"].value = "raz"
+    assert test_type.map_to_submessage_value["bar"].value == "raz"
+    bar.value = "meh"
+    assert test_type.map_to_submessage_value["bar"].value == "meh"
+    assert {(k, m.value) for k, m in test_type.map_to_submessage_value.items()} == {
+        ("foo", "hi"),
+        ("bar", "meh"),
+    }

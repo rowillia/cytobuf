@@ -26,23 +26,23 @@ cdef extern from "{{ file.cpp_header }}" namespace "{{ file.namespace | join("::
         {{ cdef_class.name }}()
     {%- for field in cdef_class.fields %}
         void clear_{{ field.name }}()
-        {{ field.return_type }} {{ field.name }}({%- if field.repeated -%}int index) except +{%- else -%}){%- endif -%}
+        {{ field.const_reference }} {{ field.name }}({%- if field.repeated -%}int) except +{%- else -%}){%- endif -%}
         {%- if field.field_type.name == 'message' %}
-        {{ field.python_type }}* mutable_{{ field.name }}({%- if field.repeated -%}int index) except +{%- else -%}){%- endif -%}
+        {{ field.cpp_type }}* mutable_{{ field.name }}({%- if field.repeated -%}int) except +{%- else -%}){%- endif -%}
         {%- endif -%}
-        {%- for signature in field.input_signatures %}
-        void set_{{ field.name }}({%- if field.repeated -%}int index, {% endif -%}{{ signature.parameters | join(", ") }}) except +
-        {%- endfor %}
+        {%- if field.settable %}
+        void set_{{ field.name }}({%- if field.repeated -%}int, {% endif -%}{{ field.const_reference }}) except +
+        {%- endif %}
         {%- if field.repeated %}
-        int {{ field.name }}_size() const
+        size_t {{ field.name }}_size() const
             {%- if field.field_type.name == 'message' %}
-        {{ field.python_type }}* add_{{ field.name }}()
+        {{ field.cpp_type }}* add_{{ field.name }}()
             {%- endif -%}
-            {%- for signature in field.input_signatures %}
-        void add_{{ field.name }}({{ signature.parameters | join(", ") }})
-            {%- endfor %}
-        {%- elif field.field_type.name == 'message' %}
-        bool has_{{ field.name }}() const;
+            {%- if field.settable %}
+        void add_{{ field.name }}({{ field.const_reference }}) except +
+            {%- endif %}
+        {%- elif field.field_type.name == 'message' and not field.is_map %}
+        bint has_{{ field.name }}() const;
         {%- endif -%}
     {%- endfor -%}
 {%- endfor %}
@@ -74,14 +74,14 @@ cpdef enum {{ enum.name }}:
 
 {%- for cdef_class in file.classes %}
 
-    {%- for field in cdef_class.fields if field.repeated %}
+    {%- for field in cdef_class.fields if field.repeated or field.is_map %}
 
 cdef class __{{ cdef_class.name }}__{{ field.name }}__container:
     cdef Cpp{{ cdef_class.name }}* _instance
     {%- endfor %}
 
 cdef class {{ cdef_class.name }}(Message):
-    {%- for field in cdef_class.fields if field.repeated %}
+    {%- for field in cdef_class.fields if field.repeated or field.is_map %}
     cdef readonly __{{ cdef_class.name }}__{{ field.name }}__container {{ field.name }}
     {%- endfor %}
     cdef Cpp{{ cdef_class.name }}* _message(self)
@@ -123,7 +123,7 @@ cdef class __{{ cdef_class.name }}__{{ field.name }}__container:
         {%- if field.field_type.name == 'message' %}
             yield {{ field.python_type }}.from_cpp(self._instance.mutable_{{ field.name }}(i))
         {%- else %}
-            yield self._instance.{{ field.name }}(i)
+            yield self._instance.{{ field.name }}(i){{ field.decode_suffix }}
         {%- endif %}
 
     def __len__(self):
@@ -141,7 +141,7 @@ cdef class __{{ cdef_class.name }}__{{ field.name }}__container:
         {%- if field.field_type.name == 'message' %}
             return {{ field.python_type }}.from_cpp(self._instance.mutable_{{ field.name }}(index))
         {%- else %}
-            return self._instance.{{ field.name }}(key)
+            return self._instance.{{ field.name }}(index){{ field.decode_suffix }}
         {%- endif %}
         else:
             start, stop, step = key.indices(size)
@@ -149,7 +149,7 @@ cdef class __{{ cdef_class.name }}__{{ field.name }}__container:
         {%- if field.field_type.name == 'message' %}
                 {{ field.python_type }}.from_cpp(self._instance.mutable_{{ field.name }}(index))
         {%- else %}
-                self._instance.{{ field.name }}(index)
+                self._instance.{{ field.name }}(index){{ field.decode_suffix }}
         {%- endif %}
                 for index in range(start, stop, step)
             ]
@@ -160,20 +160,79 @@ cdef class __{{ cdef_class.name }}__{{ field.name }}__container:
         return {{ field.python_type }}.from_cpp(self._instance.add_{{ field.name }}())
         {%- else %}
 
-    def add(self, value):
-        self._instance.add_{{ field.name }}(value)
+    def add(self, {{ field.python_type }} value):
+        self._instance.add_{{ field.name }}(value{{ field.encode_suffix }})
         {%- endif -%}
+    {%- endfor %}
+
+    {%- for field in cdef_class.fields if field.is_map %}
+
+cdef class __{{ cdef_class.name }}__{{ field.name }}__container:
+
+    def __iter__(self):
+        cdef {{ field.cython_type }} map_instance = self._instance.{{ field.name }}()
+        cdef {{ field.cython_type }}.iterator it = map_instance.begin()
+        while it != map_instance.end():
+            yield dereference(it).first{{ field.key_field.decode_suffix }}
+            postincrement(it)
+
+    def items(self):
+        cdef {{ field.cython_type }} map_instance = self._instance.{{ field.name }}()
+        cdef {{ field.cython_type }}.iterator it = map_instance.begin()
+        cdef {{ field.key_field.python_type }} key_value
+        while it != map_instance.end():
+            key_value = dereference(it).first{{ field.key_field.decode_suffix }}
+            {%- if field.value_field.field_type.name == 'message' %}
+            yield key_value, {{ field.value_field.python_type }}.from_cpp(&(dereference(it).second))
+            {%- else %}
+            yield key_value, dereference(it).second{{ field.value_field.decode_suffix }}
+            {%- endif %}
+            postincrement(it)
+
+    def __len__(self):
+        return self._instance.{{ field.name }}().size()
+
+    def __contains__(self, key):
+        cdef {{ field.cython_type }} map_instance = self._instance.{{ field.name }}()
+        cdef {{ field.key_field.cpp_type }} key_value = key{{ field.key_field.encode_suffix }}
+        return map_instance.contains(key_value)
+
+    def __getitem__(self, {{ field.key_field.cython_type }} key):
+        cdef {{ field.key_field.cpp_type }} key_value = key{{ field.key_field.encode_suffix }}
+        {%- if field.value_field.field_type.name == 'message' %}
+        cdef {{ field.cython_type }}* map_instance = self._instance.mutable_{{ field.name }}()
+        return {{ field.value_field.python_type }}.from_cpp(&dereference(map_instance)[key_value])
+        {%- else %}
+        cdef {{ field.cython_type }} map_instance = self._instance.{{ field.name }}()
+        return map_instance[key_value]{{ field.value_field.decode_suffix }}
+        {%- endif %}
+
+    def __delitem__(self, {{ field.key_field.cython_type }} key):
+        cdef {{ field.cython_type }}* map_instance = self._instance.mutable_{{ field.name }}()
+        cdef {{ field.key_field.cpp_type }} key_value = key{{ field.key_field.encode_suffix }}
+        cdef size_t result
+        result = dereference(map_instance).erase(key_value)
+        if result == 0:
+            raise KeyError(key)
+
+        {%- if field.value_field.field_type.name != 'message' %}
+    def __setitem__(self, {{ field.key_field.cython_type }} key, {{ field.value_field.cython_type }} value):
+        cdef {{ field.cython_type }}* map_instance = self._instance.mutable_{{ field.name }}()
+        cdef {{ field.key_field.cpp_type }} key_value = key{{ field.key_field.encode_suffix }}
+        dereference(map_instance)[key_value] = value{{ field.value_field.decode_suffix }}
+        {%- endif %}
+
     {%- endfor %}
 
 cdef class {{ cdef_class.name }}(Message):
 
     def __cinit__(self, _init = True):
-    {%- for field in cdef_class.fields if field.repeated %}
+    {%- for field in cdef_class.fields if field.repeated or field.is_map %}
         self.{{ field.name }} = __{{ cdef_class.name }}__{{ field.name }}__container()
     {%- endfor %}
         if _init:
             instance = new Cpp{{ cdef_class.name }}()
-    {%- for field in cdef_class.fields if field.repeated %}
+    {%- for field in cdef_class.fields if field.repeated or field.is_map %}
             self.{{ field.name }}._instance = instance
     {%- endfor %}
             self._internal = instance
@@ -185,21 +244,24 @@ cdef class {{ cdef_class.name }}(Message):
     cdef from_cpp(Cpp{{ cdef_class.name }}* other):
         result = {{ cdef_class.name }}(_init=False)
         result._internal = other   
-    {%- for field in cdef_class.fields if field.repeated %}
+    {%- for field in cdef_class.fields if field.repeated or field.is_map %}
         result.{{ field.name }}._instance = other
     {%- endfor %}
         return result
         
-    {%- for field in cdef_class.fields if not field.repeated %}
+    {%- for map_field in cdef_class.fields if map_field.is_map %}
+    {%- endfor %}
+
+    {%- for field in cdef_class.fields if not field.repeated and not field.is_map %}
         {%- if field.field_type.name == 'scalar' %}
 
     @property
     def {{ field.name }}(self):
-        return self._message().{{ field.name }}(){%- if field.python_type == 'str' -%}.decode('utf-8'){%- endif %}
+        return self._message().{{ field.name }}(){{ field.decode_suffix }}
 
     @{{ field.name }}.setter
-    def {{ field.name }}(self, {{ field.python_type }} value):
-        self._message().set_{{ field.name }}(value{%- if field.python_type == 'str' -%}.encode('utf-8'){%- endif %})
+    def {{ field.name }}(self, {{ field.cython_type }} value):
+        self._message().set_{{ field.name }}(value{{ field.encode_suffix }})
         {%- else %}
 
     @property
@@ -210,7 +272,6 @@ cdef class {{ cdef_class.name }}(Message):
     @{{ field.name }}.deleter
     def {{ field.name }}(self):
         self._message().clear_{{ field.name }}()
-        {%- else %}
     {%- endfor %}
 {%- endfor %}
 """

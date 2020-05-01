@@ -83,34 +83,31 @@ def test_extern_pxd_render(pxd_file):
             Person_PhoneNumber()
             void clear_number()
             const string& number()
-            void set_number(const char*) except +
-            void set_number(const char*, int index) except +
+            void set_number(const string&) except +
             void clear_type()
             Person_PhoneType type()
-            void set_type(Person_PhoneType value) except +
+            void set_type(Person_PhoneType) except +
 
         cdef cppclass Person(Message):
             Person()
             void clear_name()
             const string& name()
-            void set_name(const char*) except +
-            void set_name(const char*, int index) except +
+            void set_name(const string&) except +
             void clear_id()
             int id()
             void set_id(int) except +
             void clear_email()
             const string& email()
-            void set_email(const char*) except +
-            void set_email(const char*, int index) except +
+            void set_email(const string&) except +
             void clear_phones()
-            const Person_PhoneNumber& phones(int index) except +
-            Person_PhoneNumber* mutable_phones(int index) except +
-            int phones_size() const
+            const Person_PhoneNumber& phones(int) except +
+            Person_PhoneNumber* mutable_phones(int) except +
+            size_t phones_size() const
             Person_PhoneNumber* add_phones()
             void clear_address()
             const Address& address()
             Address* mutable_address()
-            bool has_address() const;
+            bint has_address() const;
     """
     )
     actual = externs_pxd_template.render(file=pxd_file)

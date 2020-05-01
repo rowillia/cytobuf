@@ -5,6 +5,7 @@ import re
 from enum import auto
 from enum import Enum
 from itertools import chain
+from typing import Any
 from typing import Dict
 from typing import Iterable
 from typing import List
@@ -49,6 +50,8 @@ def proto_filename_to_base(proto_filename):
 class ProtoCythonSymbol(NamedTuple):
     file_descriptor: FileDescriptorProto
     name: str
+    is_map_entry: bool
+    descriptor: Optional[DescriptorProto] = None
 
     @staticmethod
     def build_fqn_to_symbol_map(
@@ -57,13 +60,21 @@ class ProtoCythonSymbol(NamedTuple):
         fqn_to_symbol: Dict[str, ProtoCythonSymbol] = {}
 
         def _add_symbols(
-            symbols: Iterable[str], prefix: Iterable[str], file_descriptor: FileDescriptorProto
+            symbols: Iterable[str],
+            prefix: Iterable[str],
+            file_descriptor: FileDescriptorProto,
+            descriptor: DescriptorProto = None,
         ) -> None:
             fqn_prefix = ".".join(chain(["." + file_descriptor.package or "."], prefix))
             for symbol in symbols:
                 fqn = f"{fqn_prefix}.{symbol}"
                 symbol = "_".join(chain(prefix, [symbol]))
-                fqn_to_symbol[fqn] = ProtoCythonSymbol(file_descriptor, symbol)
+                fqn_to_symbol[fqn] = ProtoCythonSymbol(
+                    file_descriptor,
+                    symbol,
+                    descriptor is not None and descriptor.options.map_entry,
+                    descriptor,
+                )
 
         def _add_messages(
             messages: Iterable[DescriptorProto],
@@ -71,10 +82,12 @@ class ProtoCythonSymbol(NamedTuple):
             file_descriptor: FileDescriptorProto,
         ) -> None:
             for message in messages:
-                _add_symbols([message.name], prefix, file_descriptor)
+                _add_symbols([message.name], prefix, file_descriptor, message)
                 sub_prefix = prefix + [message.name]
                 _add_messages(message.nested_type, sub_prefix, file_descriptor)
-                _add_symbols((enum.name for enum in message.enum_type), sub_prefix, file_descriptor)
+                _add_symbols(
+                    (enum.name for enum in message.enum_type), sub_prefix, file_descriptor, None
+                )
 
         for fd in file_descriptors:
             _add_messages(fd.message_type, [], fd)
@@ -164,27 +177,66 @@ class Field(NamedTuple):
     name: str
     field_type: FieldType
     repeated: bool
-    return_type: str
-    input_signatures: List[Signature]
+    is_reference: bool
+    settable: bool
+    cpp_type: str
+    cython_type: str
     python_type: str
+    encode_suffix: str = ""
+    decode_suffix: str = ""
+    is_map: bool = False
+    key_field: Optional[Any] = None
+    value_field: Optional[Any] = None
+
+    @property
+    def const_reference(self):
+        if self.is_reference:
+            return f"const {self.cpp_type}&"
+        return self.cpp_type
 
     @staticmethod
-    def _create_string_or_bytes(name: str, python_type: str, repeated: bool = False) -> Field:
+    def _create_string_or_bytes(
+        name: str,
+        python_type: str,
+        repeated: bool = False,
+        encode_suffix: str = "",
+        decode_suffix: str = "",
+    ) -> Field:
         return Field(
             name=name,
             field_type=FieldType.scalar,
             repeated=repeated,
-            return_type="const string&",
-            input_signatures=[
-                Signature(parameters=["const char*"]),
-                Signature(parameters=["const char*", "int index"]),
-            ],
+            is_reference=True,
+            settable=True,
+            cpp_type="string",
+            cython_type=python_type,
+            python_type=python_type,
+            encode_suffix=encode_suffix,
+            decode_suffix=decode_suffix,
+        )
+
+    @staticmethod
+    def _create_scalar(name: str, python_type: str, cython_type: str, repeated: bool) -> Field:
+        return Field(
+            name=name,
+            field_type=FieldType.scalar,
+            repeated=repeated,
+            is_reference=False,
+            settable=True,
+            cpp_type=cython_type,
+            cython_type=cython_type,
             python_type=python_type,
         )
 
     @staticmethod
     def create_string(name: str, repeated: bool = False) -> Field:
-        return Field._create_string_or_bytes(name, "str", repeated)
+        return Field._create_string_or_bytes(
+            name,
+            "str",
+            repeated,
+            encode_suffix=".encode('utf-8')",
+            decode_suffix=".decode('utf-8')",
+        )
 
     @staticmethod
     def create_bytes(name: str, repeated: bool = False) -> Field:
@@ -192,60 +244,25 @@ class Field(NamedTuple):
 
     @staticmethod
     def create_float(name: str, repeated: bool = False) -> Field:
-        return Field(
-            name=name,
-            field_type=FieldType.scalar,
-            repeated=repeated,
-            return_type="float",
-            input_signatures=[Signature(parameters=["float"])],
-            python_type="float",
-        )
+        return Field._create_scalar(name, "float", "float", repeated)
 
     @staticmethod
     def create_double(name: str, repeated: bool = False) -> Field:
-        return Field(
-            name=name,
-            field_type=FieldType.scalar,
-            repeated=repeated,
-            return_type="double",
-            input_signatures=[Signature(parameters=["double"])],
-            python_type="double",
-        )
+        return Field._create_scalar(name, "float", "double", repeated)
 
     @staticmethod
     def create_int(name: str, unsigned: bool = False, repeated: bool = False) -> Field:
         prefix = "unsigned " if unsigned else ""
-        return Field(
-            name=name,
-            field_type=FieldType.scalar,
-            repeated=repeated,
-            return_type=f"{prefix}int",
-            input_signatures=[Signature(parameters=[f"{prefix}int"])],
-            python_type=f"{prefix}int",
-        )
+        return Field._create_scalar(name, "int", f"{prefix}int", repeated)
 
     @staticmethod
     def create_bool(name: str, repeated: bool = False) -> Field:
-        return Field(
-            name=name,
-            field_type=FieldType.scalar,
-            repeated=repeated,
-            return_type="bint",
-            input_signatures=[Signature(parameters=["bint"])],
-            python_type="bint",
-        )
+        return Field._create_scalar(name, "bool", "bint", repeated)
 
     @staticmethod
     def create_long(name: str, unsigned: bool = False, repeated: bool = False) -> Field:
         prefix = "unsigned " if unsigned else ""
-        return Field(
-            name=name,
-            field_type=FieldType.scalar,
-            repeated=repeated,
-            return_type=f"{prefix}long long",
-            input_signatures=[Signature(parameters=[f"{prefix}long long"])],
-            python_type=f"{prefix}long long",
-        )
+        return Field._create_scalar(name, "int", f"{prefix}long long", repeated)
 
     @staticmethod
     def create_enum(name: str, enum_type: str, repeated: bool = False) -> Field:
@@ -253,8 +270,10 @@ class Field(NamedTuple):
             name=name,
             field_type=FieldType.scalar,
             repeated=repeated,
-            return_type=enum_type,
-            input_signatures=[Signature(parameters=[f"{enum_type} value"])],
+            is_reference=False,
+            settable=True,
+            cython_type=enum_type,
+            cpp_type=enum_type,
             python_type=enum_type,
         )
 
@@ -264,9 +283,30 @@ class Field(NamedTuple):
             name=name,
             field_type=FieldType.message,
             repeated=repeated,
-            return_type=f"const {message_name}&",
-            input_signatures=[],
+            is_reference=True,
+            settable=False,
+            cpp_type=message_name,
+            cython_type=f"Cpp{message_name}",
             python_type=message_name,
+        )
+
+    @staticmethod
+    def create_map(name: str, key_field: Field, value_field: Field) -> Field:
+        cython_type = value_field.cpp_type
+        if value_field.field_type == FieldType.message:
+            cython_type = value_field.cython_type
+        return Field(
+            name=name,
+            field_type=FieldType.message,
+            repeated=False,
+            is_reference=True,
+            settable=False,
+            cython_type=f"Map[{key_field.cpp_type}, {cython_type}]",
+            python_type=f"Dict[{key_field.python_type}, {value_field.python_type}]",
+            cpp_type=f"Map[{key_field.cpp_type}, {value_field.cpp_type}]",
+            is_map=True,
+            key_field=key_field,
+            value_field=value_field,
         )
 
     @staticmethod
@@ -278,6 +318,26 @@ class Field(NamedTuple):
     ) -> Optional[Field]:
         repeated = field_descriptor.label == FieldDescriptorProto.LABEL_REPEATED
         field_type = field_descriptor.type
+        if repeated and field_type == FieldDescriptorProto.TYPE_MESSAGE:
+            # special case for maps.  The C++ API doesn't treating maps as repeated key values.
+            message_type = fqn_map[field_descriptor.type_name]
+            if message_type.is_map_entry:
+                imports.add(
+                    CImport(Module(package="cytobuf.protobuf", module_basename="common"), "Map")
+                )
+                imports.add(
+                    CImport(Module(package="cython", module_basename="operator"), "dereference")
+                )
+                imports.add(
+                    CImport(Module(package="cython", module_basename="operator"), "postincrement")
+                )
+                key_field = Field.get_field_by_name(
+                    "key", fqn_map, imports, message_type, output_prefix
+                )
+                value_field = Field.get_field_by_name(
+                    "value", fqn_map, imports, message_type, output_prefix
+                )
+                return Field.create_map(field_descriptor.name, key_field, value_field)
         if field_type in INT_TYPES:
             return Field.create_int(field_descriptor.name, field_type in UNSIGNED_TYPES, repeated)
         elif field_type in LONG_TYPES:
@@ -299,6 +359,16 @@ class Field(NamedTuple):
             symbol = Field.add_import(field_descriptor, fqn_map, imports, output_prefix)
             return Field.create_message(field_descriptor.name, symbol.name, repeated)
         return None
+
+    @staticmethod
+    def get_field_by_name(name: str, fqn_map, imports, message_type, output_prefix):
+        key_field_descriptor = next(
+            field for field in message_type.descriptor.field if field.name == name
+        )
+        key_field = Field.from_field_descriptor(
+            key_field_descriptor, fqn_map, imports, output_prefix
+        )
+        return key_field
 
     @staticmethod
     def add_import(
@@ -443,6 +513,8 @@ class ProtoFile(NamedTuple):
             path + "_" + class_descriptor.name if path else class_descriptor.name
         ) + "_"
         for nested_class in class_descriptor.nested_type:
+            if nested_class.options.map_entry:
+                continue
             new_class = ProtoFile._add_class(
                 nested_class, fqn_map, classes, enums, imports, embedded_path, output_prefix
             )
