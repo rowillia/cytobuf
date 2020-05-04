@@ -39,7 +39,7 @@ def test_enum():
 def test_set_enum(value):
     person = people_pb2.Person()
     new_phone = person.phones.add()
-    new_phone.type = people_pb2.Person.PhoneType.HOME
+    new_phone.type = value
     assert new_phone.type == people_pb2.Person.PhoneType.HOME
     assert new_phone.type == 1
     assert new_phone.ToJsonString() == '{"type":"HOME"}'

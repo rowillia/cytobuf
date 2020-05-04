@@ -2,7 +2,24 @@ syntax = "proto3";
 
 package type_test;
 
+
+enum TopLevelEnum {
+    VALUE_0 = 0;
+    VALUE_1 = 1;
+    VALUE_2 = 2;
+}
+
 message SubMessage {
+    message SubSubMessage {
+        message SubSubSubMessage {
+            enum SubSubSubEnum {
+                VALUE_0 = 0;
+                VALUE_1 = 1;
+                VALUE_2 = 2;
+             }
+             SubSubSubEnum embedded_value = 1;
+        }
+    }
     string value = 1;
 }
 
@@ -28,4 +45,5 @@ message TypeTester {
     map<string, int32> map_to_int32_value = 19;
     map<string, SubMessage> map_to_submessage_value = 20;
     map<string, string> map_to_string_value = 21;
+    string operator = 22;
 }

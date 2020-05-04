@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import keyword
 import os
 import re
 from enum import auto
@@ -18,6 +19,7 @@ from google.protobuf.descriptor_pb2 import EnumDescriptorProto
 from google.protobuf.descriptor_pb2 import FieldDescriptorProto
 from google.protobuf.descriptor_pb2 import FileDescriptorProto
 
+from cytobuf.protoc_gen_cython.constants import CPP_KEYWORDS
 
 INT_TYPES = {
     FieldDescriptorProto.TYPE_INT32,
@@ -47,32 +49,124 @@ def proto_filename_to_base(proto_filename):
     return re.sub(r"\.proto$", "", proto_filename)
 
 
+class Module(NamedTuple):
+    module_basename: str
+    package: str = ""
+    proto_module: bool = False
+    is_enum_module: bool = False
+    output_prefix: str = ""
+
+    @property
+    def prefix(self) -> str:
+        prefix = f"{self.package}." if self.package else ""
+        return f"{self.output_prefix}{prefix}"
+
+    @property
+    def cython_module(self) -> str:
+        if self.proto_module:
+            return f"{self.prefix}_{self.module_basename}__cy_pb2"
+        return f"{self.prefix}{self.module_basename}"
+
+    @property
+    def python_module(self) -> str:
+        if self.is_enum_module:
+            return self.cython_module
+        return f"{self.prefix}{self.module_basename}_pb2"
+
+    @property
+    def externs_module(self) -> str:
+        if self.proto_module:
+            return f"{self.cython_module}_externs"
+        return self.cython_module
+
+    @property
+    def extern_pxd_filename(self) -> str:
+        return f"{self.externs_module.replace('.', '/')}.pxd"
+
+    @property
+    def pxd_filename(self) -> str:
+        return f"{self.cython_module.replace('.', '/')}.pxd"
+
+    @property
+    def pyx_filename(self) -> str:
+        return f"{self.cython_module.replace('.', '/')}.pyx"
+
+    @property
+    def py_filename(self) -> str:
+        return f"{self.python_module.replace('.', '/')}.py"
+
+    @staticmethod
+    def from_package_and_file(
+        package: str, filename: str, output_prefix: str, is_enum_module: bool = False
+    ) -> Module:
+        module_basename = (
+            proto_filename_to_base(os.path.basename(filename)).replace("-", "_").replace(".", "/")
+        )
+        result = Module(
+            package=package,
+            module_basename=module_basename,
+            proto_module=True,
+            output_prefix=output_prefix,
+            is_enum_module=is_enum_module,
+        )
+        return result
+
+
+class CImport(NamedTuple):
+    module: Module
+    symbol: Name
+    internal_cpp_module: Optional[Module] = None
+
+    @property
+    def cpp_module(self) -> Module:
+        return self.internal_cpp_module or self.module
+
+
 class ProtoCythonSymbol(NamedTuple):
-    file_descriptor: FileDescriptorProto
-    name: str
+    package: str
+    filename: str
+    name: Name
     is_map_entry: bool
+    c_import: CImport
     descriptor: Optional[DescriptorProto] = None
 
     @staticmethod
     def build_fqn_to_symbol_map(
-        file_descriptors: Iterable[FileDescriptorProto]
+        file_descriptors: Iterable[FileDescriptorProto], output_prefix: str
     ) -> Dict[str, ProtoCythonSymbol]:
         fqn_to_symbol: Dict[str, ProtoCythonSymbol] = {}
 
         def _add_symbols(
             symbols: Iterable[str],
             prefix: Iterable[str],
-            file_descriptor: FileDescriptorProto,
+            package: str,
+            filename: str,
+            is_enum: bool,
             descriptor: DescriptorProto = None,
         ) -> None:
-            fqn_prefix = ".".join(chain(["." + file_descriptor.package or "."], prefix))
+            fqn_prefix = ".".join(chain(["." + package or "."], prefix))
+            module = Module.from_package_and_file(package, filename, output_prefix=output_prefix)
+            symbol_prefix = package.replace(".", "_")
             for symbol in symbols:
                 fqn = f"{fqn_prefix}.{symbol}"
-                symbol = "_".join(chain(prefix, [symbol]))
+                module_symbol = Name("_".join(prefix), symbol)
+                cython_module = module
+                if is_enum:
+                    enum_package = ProtoFile.generate_enum_module_prefix(
+                        package, filename, ""
+                    ) + str(module_symbol)
+                    split_enum_package = enum_package.rsplit(".", 1)
+                    cython_module = Module.from_package_and_file(
+                        split_enum_package[0], split_enum_package[1], output_prefix, True
+                    )
+                symbol_name = Name(symbol_prefix, module_symbol)
+                c_import = CImport(cython_module, symbol_name, module)
                 fqn_to_symbol[fqn] = ProtoCythonSymbol(
-                    file_descriptor,
-                    symbol,
+                    package,
+                    filename,
+                    symbol_name,
                     descriptor is not None and descriptor.options.map_entry,
+                    c_import,
                     descriptor,
                 )
 
@@ -82,84 +176,70 @@ class ProtoCythonSymbol(NamedTuple):
             file_descriptor: FileDescriptorProto,
         ) -> None:
             for message in messages:
-                _add_symbols([message.name], prefix, file_descriptor, message)
+                _add_symbols(
+                    [message.name],
+                    prefix,
+                    file_descriptor.package,
+                    file_descriptor.name,
+                    False,
+                    message,
+                )
                 sub_prefix = prefix + [message.name]
                 _add_messages(message.nested_type, sub_prefix, file_descriptor)
                 _add_symbols(
-                    (enum.name for enum in message.enum_type), sub_prefix, file_descriptor, None
+                    (enum.name for enum in message.enum_type),
+                    sub_prefix,
+                    file_descriptor.package,
+                    file_descriptor.name,
+                    True,
+                    None,
                 )
 
         for fd in file_descriptors:
             _add_messages(fd.message_type, [], fd)
-            _add_symbols((enum.name for enum in fd.enum_type), [], fd)
+            _add_symbols((enum.name for enum in fd.enum_type), [], fd.package, fd.name, True)
         return fqn_to_symbol
-
-
-class Module(NamedTuple):
-    module_basename: str
-    package: str = ""
-    proto_module: bool = False
-    output_prefix: str = ""
-
-    @property
-    def prefix(self):
-        prefix = f"{self.package}." if self.package else ""
-        return f"{self.output_prefix}{prefix}"
-
-    @property
-    def cython_module(self):
-        if self.proto_module:
-            return f"{self.prefix}_{self.module_basename}__cy_pb2"
-        return f"{self.prefix}{self.module_basename}"
-
-    @property
-    def python_module(self):
-        return f"{self.prefix}{self.module_basename}_pb2"
-
-    @property
-    def externs_module(self):
-        if self.proto_module:
-            return f"{self.cython_module}_externs"
-        return self.cython_module
-
-    @staticmethod
-    def from_package_and_file(package: str, filename: str, output_prefix: str) -> Module:
-        module_basename = (
-            proto_filename_to_base(os.path.basename(filename)).replace("-", "_").replace(".", "/")
-        )
-        result = Module(
-            package=package,
-            module_basename=module_basename,
-            proto_module=True,
-            output_prefix=output_prefix,
-        )
-        return result
-
-
-class CImport(NamedTuple):
-    module: Module
-    symbol: str
 
 
 class Name(NamedTuple):
     prefix: str
-    name: str
+    name: Any
+
+    @property
+    def raw_name(self):
+        if isinstance(self.name, Name):
+            return self.name.raw_name
+        else:
+            return self.name
 
     def __str__(self):
-        return f"{self.prefix}{self.name}"
+        return f"{(self.prefix + '_') if self.prefix else ''}{self.name}"
 
 
 class ProtoEnum(NamedTuple):
     name: Name
-    value_names: List[str]
+    value_names: List[Name]
     exported: bool
+    module: Module
 
     @staticmethod
-    def from_enum_descriptor(enum_type: EnumDescriptorProto, prefix: str = "") -> ProtoEnum:
+    def from_enum_descriptor(
+        enum_type: EnumDescriptorProto,
+        package: str,
+        fqn_map: Dict[str, ProtoCythonSymbol],
+        prefix: Optional[List[str]] = None,
+    ) -> ProtoEnum:
+        prefix = prefix or []
+        fqn = "." + ".".join(chain([package], prefix, [enum_type.name]))
+        symbol = fqn_map[fqn]
+        value_prefix = ""
+        if prefix:
+            value_prefix = "_".join(chain(prefix, [enum_type.name]))
         return ProtoEnum(
-            name=Name(prefix, enum_type.name),
-            value_names=[value.name for value in enum_type.value],
+            name=symbol.name,
+            value_names=[Name(value_prefix, value.name) for value in enum_type.value],
             exported=not prefix,
+            module=symbol.c_import.module,
         )
 
 
@@ -187,12 +267,28 @@ class Field(NamedTuple):
     is_map: bool = False
     key_field: Optional[Any] = None
     value_field: Optional[Any] = None
+    type_symbol: Optional[ProtoCythonSymbol] = None
+
+    def const_reference(self, module: Module) -> str:
+        if self.is_reference:
+            return f"const {self.local_cpp_type(module)}&"
+        return self.local_cpp_type(module)
+
+    def local_cpp_type(self, module: Module) -> str:
+        if self.is_map and self.key_field and self.value_field:
+            return (
+                f"Map[{self.key_field.local_cpp_type(module)}, "
+                f"{self.value_field.local_cpp_type(module)}]"
+            )
+        if self.type_symbol and module == self.type_symbol.c_import.cpp_module:
+            return self.type_symbol.name.name
+        return self.cpp_type
 
     @property
-    def const_reference(self):
-        if self.is_reference:
-            return f"const {self.cpp_type}&"
-        return self.cpp_type
+    def cpp_name(self):
+        if self.name in CPP_KEYWORDS:
+            return f"{self.name}_"
+        return self.name
 
     @staticmethod
     def _create_string_or_bytes(
@@ -265,29 +361,35 @@ class Field(NamedTuple):
         return Field._create_scalar(name, "int", f"{prefix}long long", repeated)
 
     @staticmethod
-    def create_enum(name: str, enum_type: str, repeated: bool = False) -> Field:
+    def create_enum(
+        name: str, enum_type_symbol: ProtoCythonSymbol, repeated: bool = False
+    ) -> Field:
         return Field(
             name=name,
             field_type=FieldType.scalar,
             repeated=repeated,
             is_reference=False,
             settable=True,
-            cython_type=enum_type,
-            cpp_type=enum_type,
-            python_type=enum_type,
+            cython_type=str(enum_type_symbol.name),
+            cpp_type=str(enum_type_symbol.name),
+            python_type=str(enum_type_symbol.name),
+            type_symbol=enum_type_symbol,
         )
 
     @staticmethod
-    def create_message(name: str, message_name: str, repeated: bool = False) -> Field:
+    def create_message(
+        name: str, message_type_symbol: ProtoCythonSymbol, repeated: bool = False
+    ) -> Field:
         return Field(
             name=name,
             field_type=FieldType.message,
             repeated=repeated,
             is_reference=True,
             settable=False,
-            cpp_type=message_name,
-            cython_type=f"Cpp{message_name}",
-            python_type=message_name,
+            cpp_type=str(message_type_symbol.name),
+            cython_type=f"_Cpp_{str(message_type_symbol.name)}",
+            python_type=str(message_type_symbol.name),
+            type_symbol=message_type_symbol,
         )
 
     @staticmethod
@@ -318,18 +420,28 @@ class Field(NamedTuple):
     ) -> Optional[Field]:
         repeated = field_descriptor.label == FieldDescriptorProto.LABEL_REPEATED
         field_type = field_descriptor.type
+        field_name = field_descriptor.name
         if repeated and field_type == FieldDescriptorProto.TYPE_MESSAGE:
             # special case for maps.  The C++ API doesn't treating maps as repeated key values.
             message_type = fqn_map[field_descriptor.type_name]
             if message_type.is_map_entry:
                 imports.add(
-                    CImport(Module(package="cytobuf.protobuf", module_basename="common"), "Map")
+                    CImport(
+                        Module(package="cytobuf.protobuf", module_basename="common"),
+                        Name("", "Map"),
+                    )
                 )
                 imports.add(
-                    CImport(Module(package="cython", module_basename="operator"), "dereference")
+                    CImport(
+                        Module(package="cython", module_basename="operator"),
+                        Name("", "dereference"),
+                    )
                 )
                 imports.add(
-                    CImport(Module(package="cython", module_basename="operator"), "postincrement")
+                    CImport(
+                        Module(package="cython", module_basename="operator"),
+                        Name("", "postincrement"),
+                    )
                 )
                 key_field = Field.get_field_by_name(
                     "key", fqn_map, imports, message_type, output_prefix
@@ -337,27 +449,27 @@ class Field(NamedTuple):
                 value_field = Field.get_field_by_name(
                     "value", fqn_map, imports, message_type, output_prefix
                 )
-                return Field.create_map(field_descriptor.name, key_field, value_field)
+                return Field.create_map(field_name, key_field, value_field)
         if field_type in INT_TYPES:
-            return Field.create_int(field_descriptor.name, field_type in UNSIGNED_TYPES, repeated)
+            return Field.create_int(field_name, field_type in UNSIGNED_TYPES, repeated)
         elif field_type in LONG_TYPES:
-            return Field.create_long(field_descriptor.name, field_type in UNSIGNED_TYPES, repeated)
+            return Field.create_long(field_name, field_type in UNSIGNED_TYPES, repeated)
         elif field_type == FieldDescriptorProto.TYPE_STRING:
-            return Field.create_string(field_descriptor.name, repeated)
+            return Field.create_string(field_name, repeated)
         elif field_type == FieldDescriptorProto.TYPE_BYTES:
-            return Field.create_bytes(field_descriptor.name, repeated)
+            return Field.create_bytes(field_name, repeated)
         elif field_type == FieldDescriptorProto.TYPE_FLOAT:
-            return Field.create_float(field_descriptor.name, repeated)
+            return Field.create_float(field_name, repeated)
         elif field_type == FieldDescriptorProto.TYPE_DOUBLE:
-            return Field.create_double(field_descriptor.name, repeated)
+            return Field.create_double(field_name, repeated)
         elif field_type == FieldDescriptorProto.TYPE_BOOL:
-            return Field.create_bool(field_descriptor.name, repeated)
+            return Field.create_bool(field_name, repeated)
         elif field_type == FieldDescriptorProto.TYPE_ENUM:
-            symbol = Field.add_import(field_descriptor, fqn_map, imports, output_prefix)
-            return Field.create_enum(field_descriptor.name, symbol.name, repeated)
+            symbol = Field.add_import(field_descriptor, fqn_map, imports)
+            return Field.create_enum(field_name, symbol, repeated)
         elif field_type == FieldDescriptorProto.TYPE_MESSAGE:
-            symbol = Field.add_import(field_descriptor, fqn_map, imports, output_prefix)
-            return Field.create_message(field_descriptor.name, symbol.name, repeated)
+            symbol = Field.add_import(field_descriptor, fqn_map, imports)
+            return Field.create_message(field_name, symbol, repeated)
         return None
 
     @staticmethod
@@ -375,16 +487,11 @@ class Field(NamedTuple):
         field_descriptor: FieldDescriptorProto,
         fqn_map: Dict[str, ProtoCythonSymbol],
         imports: Set[CImport],
-        output_prefix: str,
     ) -> ProtoCythonSymbol:
         type_name: str = field_descriptor.type_name
         symbol = fqn_map[type_name]
-        dependency_fd = symbol.file_descriptor
-        if dependency_fd.package:
-            module = Module.from_package_and_file(
-                dependency_fd.package, dependency_fd.name, output_prefix=output_prefix
-            )
-            imports.add(CImport(module, symbol.name))
+        if symbol.package:
+            imports.add(symbol.c_import)
         return symbol
 
 
@@ -397,19 +504,35 @@ class Class(NamedTuple):
     @staticmethod
     def from_descriptor(
         descriptor: DescriptorProto,
+        package: str,
         fqn_map: Dict[str, ProtoCythonSymbol],
         imports: Set[CImport],
         nested_names: List[Name],
-        prefix: str,
+        prefix: List[str],
         output_prefix: str,
     ) -> Class:
+        prefix = prefix or []
+        fqn = "." + ".".join(chain([package], prefix, [descriptor.name]))
+        symbol = fqn_map[fqn]
+        invalid_field_names = set(keyword.kwlist)
+        for field in descriptor.field:
+            field_name = field.name
+            invalid_field_names.add(f"clear_{field_name}")
+            invalid_field_names.add(f"set_{field_name}")
+            if field.label == FieldDescriptorProto.LABEL_REPEATED:
+                invalid_field_names.add(f"{field_name}_size")
+                invalid_field_names.add(f"add_{field_name}")
+            elif field.type == FieldDescriptorProto.TYPE_MESSAGE:
+                invalid_field_names.add(f"has_{field_name}")
+
         return Class(
-            name=Name(prefix, descriptor.name),
+            name=symbol.name,
             fields=[
                 cython_field
                 for cython_field in (
                     Field.from_field_descriptor(field, fqn_map, imports, output_prefix)
                     for field in descriptor.field
+                    if field.name not in invalid_field_names
                 )
                 if cython_field is not None
             ],
@@ -420,28 +543,13 @@ class Class(NamedTuple):
 
 class ProtoFile(NamedTuple):
     imports: Iterable[CImport]
+    extern_imports: Iterable[CImport]
     namespace: List[str]
     enums: List[ProtoEnum]
     classes: List[Class]
     proto_filename: str
     proto_package: str
     output_prefix: str
-
-    @property
-    def extern_pxd_filename(self) -> str:
-        return f"{self.module.externs_module.replace('.', '/')}.pxd"
-
-    @property
-    def pxd_filename(self) -> str:
-        return f"{self.module.cython_module.replace('.', '/')}.pxd"
-
-    @property
-    def pyx_filename(self) -> str:
-        return f"{self.module.cython_module.replace('.', '/')}.pyx"
-
-    @property
-    def py_filename(self) -> str:
-        return f"{self.module.python_module.replace('.', '/')}.py"
 
     @property
     def module(self) -> Module:
@@ -457,6 +565,18 @@ class ProtoFile(NamedTuple):
     def cpp_source(self):
         return proto_filename_to_base(self.proto_filename) + ".pb.cc"
 
+    @property
+    def enum_module_prefix(self):
+        return self.generate_enum_module_prefix(
+            self.proto_package, self.proto_filename, self.output_prefix
+        )
+
+    @staticmethod
+    def generate_enum_module_prefix(package: str, filename: str, prefix: str = "") -> str:
+        base_name = proto_filename_to_base(os.path.basename(filename))
+        module = Module.from_package_and_file(package, filename, prefix, True)
+        return f"{module.prefix}_cy_enums.{base_name}_"
+
     @staticmethod
     def from_file_descriptor_proto(
         file_descriptor: FileDescriptorProto,
@@ -465,18 +585,32 @@ class ProtoFile(NamedTuple):
     ) -> ProtoFile:
         namespace = file_descriptor.package.split(".")
         classes: List[Class] = []
-        imports = {CImport(Module(package="libcpp", module_basename="string"), "string")}
+        imports = {CImport(Module(package="libcpp", module_basename="string"), Name("", "string"))}
         enums = [
-            ProtoEnum.from_enum_descriptor(enum_type) for enum_type in file_descriptor.enum_type
+            ProtoEnum.from_enum_descriptor(enum_type, file_descriptor.package, fqn_map)
+            for enum_type in file_descriptor.enum_type
+            if enum_type.name not in keyword.kwlist
         ]
         for descriptor in file_descriptor.message_type:
-            ProtoFile._add_class(descriptor, fqn_map, classes, enums, imports, "", output_prefix)
+            if descriptor.name not in keyword.kwlist:
+                ProtoFile._add_class(
+                    file_descriptor.package,
+                    descriptor,
+                    fqn_map,
+                    classes,
+                    enums,
+                    imports,
+                    [],
+                    output_prefix,
+                )
         current_module = Module.from_package_and_file(
             file_descriptor.package, file_descriptor.name, output_prefix=output_prefix
         )
         filtered_imports = sorted(imp for imp in imports if imp.module != current_module)
+        extern_imports = [imp for imp in filtered_imports if imp.cpp_module != current_module]
         return ProtoFile(
             imports=filtered_imports,
+            extern_imports=extern_imports,
             namespace=namespace,
             enums=enums,
             classes=classes,
@@ -491,42 +625,72 @@ class ProtoFile(NamedTuple):
         files_to_generate: Set[str],
         output_prefix: str,
     ) -> List[ProtoFile]:
-        fqn_map = ProtoCythonSymbol.build_fqn_to_symbol_map(file_descriptors)
-        return [
+        fqn_map = ProtoCythonSymbol.build_fqn_to_symbol_map(file_descriptors, output_prefix)
+        proto_files = [
             ProtoFile.from_file_descriptor_proto(descriptor, fqn_map, output_prefix)
             for descriptor in file_descriptors
-            if descriptor.name in files_to_generate
         ]
+        module_to_proto = {proto_file.module: proto_file for proto_file in proto_files}
+        for proto_file in proto_files:
+            for enum in proto_file.enums:
+                module_to_proto[enum.module] = proto_file
+        filename_to_proto = {proto_file.proto_filename: proto_file for proto_file in proto_files}
+        result: Set[Module] = set()
+        remaining = list(files_to_generate)
+        while remaining:
+            next_protofile: ProtoFile = filename_to_proto[remaining.pop()]
+            if next_protofile.module in result:
+                continue
+            missing_deps = [
+                module_to_proto[dep.module].proto_filename
+                for dep in next_protofile.extern_imports
+                if dep.module.proto_module and dep.module not in result
+            ]
+            if not missing_deps:
+                result.add(next_protofile.module)
+                for enum in next_protofile.enums:
+                    result.add(enum.module)
+            else:
+                remaining.append(next_protofile.proto_filename)
+                remaining.extend(missing_deps)
+        return [module_to_proto[module] for module in result if not module.is_enum_module]
 
     @staticmethod
     def _add_class(
+        package: str,
         class_descriptor: DescriptorProto,
         fqn_map: Dict[str, ProtoCythonSymbol],
         classes: List[Class],
         enums: List[ProtoEnum],
         imports: Set[CImport],
-        path: str,
+        path: List[str],
         output_prefix: str,
     ) -> Class:
         nested_names: List[Name] = []
-        embedded_path = (
-            path + "_" + class_descriptor.name if path else class_descriptor.name
-        ) + "_"
+        embedded_path = path + [class_descriptor.name]
         for nested_class in class_descriptor.nested_type:
-            if nested_class.options.map_entry:
+            if nested_class.options.map_entry or nested_class.name in keyword.kwlist:
                 continue
             new_class = ProtoFile._add_class(
-                nested_class, fqn_map, classes, enums, imports, embedded_path, output_prefix
+                package,
+                nested_class,
+                fqn_map,
+                classes,
+                enums,
+                imports,
+                embedded_path,
+                output_prefix,
             )
             nested_names.append(new_class.name)
         nested_enums = [
-            ProtoEnum.from_enum_descriptor(nested_enum, embedded_path)
+            ProtoEnum.from_enum_descriptor(nested_enum, package, fqn_map, embedded_path)
             for nested_enum in class_descriptor.enum_type
+            if nested_enum.name not in keyword.kwlist
         ]
         enums.extend(nested_enums)
         nested_names.extend(enum.name for enum in nested_enums)
         new_class = Class.from_descriptor(
-            class_descriptor, fqn_map, imports, nested_names, path, output_prefix
+            class_descriptor, package, fqn_map, imports, nested_names, path, output_prefix
         )
         classes.append(new_class)
         return new_class

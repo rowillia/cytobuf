@@ -1,9 +1,5 @@
 proto_files	:=      $(shell cd ./tests && find . -iname "*.proto")
 
-.PHONY: benchmark
-benchmark: install
-	./venv/bin/python benchmark.py
-
 scratch:
 	mkdir -p scratch
 
@@ -35,5 +31,6 @@ install: venv scratch dev-requirements.txt setup.py $(shell find cytobuf -type f
 	./venv/bin/pip install .
 	./venv/bin/python setup.py build_ext --inplace
 
+.PHONY: benchmark
 benchmark: cy py
 	cd tests/performance && ../../venv/bin/python benchmark.py
