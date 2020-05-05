@@ -11,7 +11,19 @@ setup(
     author_email="roy@lyft.com",
     url="https://github.com/rowillia/protoc-gen-cython",
     packages=find_packages(),
-    ext_modules=cythonize(["cytobuf/protobuf/message.pyx"]),
+    ext_modules=cythonize(
+        [
+            "cytobuf/protobuf/message.pyx",
+            "cytobuf/protobuf/repeated_field.pyx",
+            "cytobuf/protobuf/repeated_int_field.pyx",
+            "cytobuf/protobuf/repeated_uint_field.pyx",
+            "cytobuf/protobuf/repeated_long_field.pyx",
+            "cytobuf/protobuf/repeated_ulong_field.pyx",
+            "cytobuf/protobuf/repeated_float_field.pyx",
+            "cytobuf/protobuf/repeated_double_field.pyx",
+            "cytobuf/protobuf/repeated_bool_field.pyx",
+        ]
+    ),
     include_package_data=True,
     setup_requires=["cython"],
     install_requires=["protobuf", "jinja2"],

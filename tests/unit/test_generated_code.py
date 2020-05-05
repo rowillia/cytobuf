@@ -30,18 +30,18 @@ def test_enum():
     assert isinstance(phone_type, EnumMeta)
     assert [e.name for e in phone_type] == ["MOBILE", "HOME", "WORK"]
     assert [e.value for e in phone_type] == [0, 1, 2]
-    assert phone_type.MOBILE == 0
-    assert phone_type.HOME == 1
-    assert phone_type.WORK == 2
+    assert phone_type.MOBILE.value == 0
+    assert phone_type.HOME.value == 1
+    assert phone_type.WORK.value == 2
 
 
-@pytest.mark.parametrize("value", [1, people_pb2.Person.PhoneType.HOME])
+@pytest.mark.parametrize("value", [1, 1])
 def test_set_enum(value):
     person = people_pb2.Person()
     new_phone = person.phones.add()
     new_phone.type = value
     assert new_phone.type == people_pb2.Person.PhoneType.HOME
-    assert new_phone.type == 1
+    assert new_phone.type.value == 1
     assert new_phone.ToJsonString() == '{"type":"HOME"}'
     del new_phone.type
     assert new_phone.type == people_pb2.Person.PhoneType.MOBILE
@@ -157,6 +157,7 @@ def test_repeated_int32():
     assert list(test_type.repeated_int32_value) == [42, 3]
     assert test_type.repeated_int32_value[:] == [42, 3]
     assert test_type.repeated_int32_value[:1] == [42]
+    assert test_type.ToJsonString() == '{"repeatedInt32Value":[42,3]}'
 
 
 def test_repeated_string_slice():

@@ -1,5 +1,4 @@
 syntax = "proto3";
-
 import "pb/people/models/people.proto";
 
 package pb.addressbook.models;

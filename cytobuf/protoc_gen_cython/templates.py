@@ -1,32 +1,38 @@
 # flake8: noqa E501
 from jinja2 import Template
 
+from cytobuf.protoc_gen_cython.constants import DEFAULT_INCLUDE_DIRECTORY
+from cytobuf.protoc_gen_cython.constants import DEFAULT_LIBRARY_DIRECTORY
 
-PYX_HEADER = """\
+PYX_HEADER = f"""\
 # cython: language_level=3
 # distutils: language = c++
 # distutils: libraries = protobuf
-# distutils: include_dirs = /usr/local/include .
-# distutils: library_dirs = /usr/local/lib
+# distutils: include_dirs = {DEFAULT_INCLUDE_DIRECTORY} .
+# distutils: library_dirs = {DEFAULT_LIBRARY_DIRECTORY}
 # distutils: extra_compile_args= -std=c++11
 """
 
 
-EXTERNS_PXD_TEMPLATE_SOURCE = """\
+MESSAGE_PXD_TEMPLATE = """\
 # cython: language_level=3
 # distutils: language = c++
-
-{%- for import in file.extern_imports %}
-from {{ import.cpp_module.externs_module }} cimport {{ import.symbol.name }} as {{ import.symbol }}
-{%- endfor %}
 cimport cytobuf.protobuf.common
+cimport cytobuf.protobuf.message
 
+{%- for import in file.imports if not import.module.pure_python_module %}
+{{ import.cython_import }}
+{%- endfor %}
+
+{% if file.enums or file.classes %}
 cdef extern from "{{ file.cpp_header }}" namespace "{{ file.namespace | join("::") }}":
+{%- endif %}
+
 {%- for enum in file.enums %}
 
-    cdef enum {{ enum.name.name }}:
+    cpdef enum {{ enum.name.name }}:
     {%- for value in enum.value_names %}
-        {{ value }},
+        {{ value.name }},
     {%- endfor %}
 {%- endfor %}
 
@@ -56,50 +62,23 @@ cdef extern from "{{ file.cpp_header }}" namespace "{{ file.namespace | join("::
         {%- endif -%}
     {%- endfor %}
 {%- endfor %}
-"""
-
-
-externs_pxd_template = Template(EXTERNS_PXD_TEMPLATE_SOURCE)
-
-
-ENUM_PXD_TEMPLATE = """\
-from {{ file.module.externs_module }} cimport {{ enum.name.name }} as {{ enum.name }}
-
-
-cpdef enum {{ enum.name.name }}:
-{%- for value in enum.value_names %}
-    {{ value.name }} = {{ enum.name }}.{{ value }},
-{%- endfor %}
-"""
-
-
-enum_pxd_template = Template(ENUM_PXD_TEMPLATE)
-
-
-MESSAGE_PXD_TEMPLATE = """\
-# cython: language_level=3
-# distutils: language = c++
-cimport cytobuf.protobuf.message
-{%- for cdef_class in file.classes %}
-from {{ file.module.externs_module }} cimport {{ cdef_class.name.name }} as _Cpp_{{ cdef_class.name }}
-{%- endfor %}
 
 {%- for cdef_class in file.classes %}
 
     {%- for field in cdef_class.fields if field.repeated or field.is_map %}
 
 cdef class __{{ cdef_class.name }}__{{ field.name }}__container:
-    cdef _Cpp_{{ cdef_class.name }}* _instance
+    cdef {{ cdef_class.name.name }}* _instance
     {%- endfor %}
 
 cdef class {{ cdef_class.name }}(cytobuf.protobuf.message.Message):
     {%- for field in cdef_class.fields if field.repeated or field.is_map %}
     cdef readonly __{{ cdef_class.name }}__{{ field.name }}__container {{ field.name }}
     {%- endfor %}
-    cdef _Cpp_{{ cdef_class.name }}* _message(self)
+    cdef {{ cdef_class.name.name }}* _message(self)
 
     @staticmethod
-    cdef from_cpp(_Cpp_{{ cdef_class.name }}* other)
+    cdef from_cpp({{ cdef_class.name.name }}* other)
 {%- endfor %}
 """
 
@@ -110,17 +89,10 @@ message_pxd_template = Template(MESSAGE_PXD_TEMPLATE)
 MESSAGE_PYX_TEMPLATE = (
     PYX_HEADER
     + """\
-# distutils: sources = {{ file.cpp_source }}
 
 cimport cytobuf.protobuf.message
 {%- for import in file.imports %}
-from {{ import.module.cython_module }} cimport {{ import.symbol }}
-    {%- if import.module.proto_module and not import.module.is_enum_module %}
-from {{ import.module.externs_module }} cimport {{ import.symbol.name }} as _Cpp_{{ import.symbol }}
-    {%- endif %}
-{%- endfor %}
-{%- for cdef_class in file.classes %}
-from {{ file.module.externs_module }} cimport {{ cdef_class.name.name }} as _Cpp_{{ cdef_class.name }}
+{{ import.cython_import }}
 {%- endfor %}
 
 {%- for cdef_class in file.classes %}
@@ -129,30 +101,32 @@ from {{ file.module.externs_module }} cimport {{ cdef_class.name.name }} as _Cpp
 cdef class __{{ cdef_class.name }}__{{ field.name }}__container:
 
     def __iter__(self):
-        cdef int i
+        cdef size_t i
         for i in range(self._instance.{{ field.cpp_name }}_size()):
         {%- if field.field_type.name == 'message' %}
             yield {{ field.python_type }}.from_cpp(self._instance.mutable_{{ field.cpp_name }}(i))
         {%- else %}
-            yield self._instance.{{ field.cpp_name }}(i){{ field.decode_suffix }}
+            yield {{ field.decode_function }}(self._instance.{{ field.cpp_name }}(i))
         {%- endif %}
 
     def __len__(self):
         return self._instance.{{ field.cpp_name }}_size()
 
     def __getitem__(self, key):
-        cdef int size, index, start, stop, step
+        cdef size_t size, index
+        cdef int start, stop, step
         size = self._instance.{{ field.cpp_name }}_size()
         if isinstance(key, int):
-            index = key
-            if index < 0:
-                index = size + index
+            if key < 0:
+                index = size + key
+            else:
+                index = key
             if not 0 <= index < size:
                 raise IndexError(f"list index ({key}) out of range")
         {%- if field.field_type.name == 'message' %}
             return {{ field.python_type }}.from_cpp(self._instance.mutable_{{ field.cpp_name }}(index))
         {%- else %}
-            return self._instance.{{ field.cpp_name }}(index){{ field.decode_suffix }}
+            return {{ field.decode_function }}(self._instance.{{ field.cpp_name }}(index))
         {%- endif %}
         else:
             start, stop, step = key.indices(size)
@@ -160,7 +134,7 @@ cdef class __{{ cdef_class.name }}__{{ field.name }}__container:
         {%- if field.field_type.name == 'message' %}
                 {{ field.python_type }}.from_cpp(self._instance.mutable_{{ field.cpp_name }}(index))
         {%- else %}
-                self._instance.{{ field.cpp_name }}(index){{ field.decode_suffix }}
+                {{ field.decode_function }}(self._instance.{{ field.cpp_name }}(index))
         {%- endif %}
                 for index in range(start, stop, step)
             ]
@@ -171,7 +145,7 @@ cdef class __{{ cdef_class.name }}__{{ field.name }}__container:
         return {{ field.python_type }}.from_cpp(self._instance.add_{{ field.cpp_name }}())
         {%- else %}
 
-    def add(self, {{ field.cython_type }} value):
+    def add(self, {{ field.local_cython_type(file.module) }} value):
         self._instance.add_{{ field.cpp_name }}(value{{ field.encode_suffix }})
         {%- endif -%}
     {%- endfor %}
@@ -181,56 +155,56 @@ cdef class __{{ cdef_class.name }}__{{ field.name }}__container:
 cdef class __{{ cdef_class.name }}__{{ field.name }}__container:
 
     def __iter__(self):
-        cdef {{ field.cython_type }} map_instance = self._instance.{{ field.cpp_name }}()
-        cdef {{ field.cython_type }}.iterator it = map_instance.begin()
+        cdef {{ field.local_cpp_type(file.module) }} map_instance = self._instance.{{ field.cpp_name }}()
+        cdef {{ field.local_cpp_type(file.module) }}.iterator it = map_instance.begin()
         while it != map_instance.end():
-            yield dereference(it).first{{ field.key_field.decode_suffix }}
+            yield {{ field.key_field.decode_function }}({{ field.decode_function }}(dereference(it).first))
             postincrement(it)
 
     def items(self):
-        cdef {{ field.cython_type }} map_instance = self._instance.{{ field.cpp_name }}()
-        cdef {{ field.cython_type }}.iterator it = map_instance.begin()
-        cdef {{ field.key_field.python_type }} key_value
+        cdef {{ field.local_cpp_type(file.module) }} map_instance = self._instance.{{ field.cpp_name }}()
+        cdef {{ field.local_cpp_type(file.module) }}.iterator it = map_instance.begin()
+        cdef {{ field.key_field.local_cython_type(file.module) }} key_value
         while it != map_instance.end():
-            key_value = dereference(it).first{{ field.key_field.decode_suffix }}
+            key_value = {{ field.key_field.decode_function }}({{ field.decode_function }}(dereference(it).first))
             {%- if field.value_field.field_type.name == 'message' %}
             yield key_value, {{ field.value_field.python_type }}.from_cpp(&(dereference(it).second))
             {%- else %}
-            yield key_value, dereference(it).second{{ field.value_field.decode_suffix }}
+            yield key_value, {{ field.decode_function }}(dereference(it).second)
             {%- endif %}
             postincrement(it)
 
     def __len__(self):
         return self._instance.{{ field.cpp_name }}().size()
 
-    def __contains__(self, key):
-        cdef {{ field.cython_type }} map_instance = self._instance.{{ field.cpp_name }}()
-        cdef {{ field.key_field.cpp_type }} key_value = key{{ field.key_field.encode_suffix }}
+    def __contains__(self, {{ field.key_field.local_cython_type(file.module) }} key):
+        cdef {{ field.local_cpp_type(file.module) }} map_instance = self._instance.{{ field.cpp_name }}()
+        cdef {{ field.key_field.local_cpp_type(file.module) }} key_value = key{{ field.key_field.encode_suffix }}
         return map_instance.contains(key_value)
 
-    def __getitem__(self, {{ field.key_field.cython_type }} key):
-        cdef {{ field.key_field.cpp_type }} key_value = key{{ field.key_field.encode_suffix }}
+    def __getitem__(self, {{ field.key_field.local_cython_type(file.module) }} key):
+        cdef {{ field.key_field.local_cpp_type(file.module) }} key_value = key{{ field.key_field.encode_suffix }}
         {%- if field.value_field.field_type.name == 'message' %}
-        cdef {{ field.cython_type }}* map_instance = self._instance.mutable_{{ field.cpp_name }}()
+        cdef {{ field.local_cpp_type(file.module) }}* map_instance = self._instance.mutable_{{ field.cpp_name }}()
         return {{ field.value_field.python_type }}.from_cpp(&dereference(map_instance)[key_value])
         {%- else %}
-        cdef {{ field.cython_type }} map_instance = self._instance.{{ field.cpp_name }}()
-        return map_instance[key_value]{{ field.value_field.decode_suffix }}
+        cdef {{ field.local_cpp_type(file.module) }} map_instance = self._instance.{{ field.cpp_name }}()
+        return {{ field.value_field.decode_function }}(map_instance[key_value])
         {%- endif %}
 
-    def __delitem__(self, {{ field.key_field.cython_type }} key):
-        cdef {{ field.cython_type }}* map_instance = self._instance.mutable_{{ field.cpp_name }}()
-        cdef {{ field.key_field.cpp_type }} key_value = key{{ field.key_field.encode_suffix }}
+    def __delitem__(self, {{ field.key_field.local_cython_type(file.module) }} key):
+        cdef {{ field.local_cpp_type(file.module) }}* map_instance = self._instance.mutable_{{ field.cpp_name }}()
+        cdef {{ field.key_field.local_cpp_type(file.module) }} key_value = key{{ field.key_field.encode_suffix }}
         cdef size_t result
         result = dereference(map_instance).erase(key_value)
         if result == 0:
             raise KeyError(key)
 
         {%- if field.value_field.field_type.name != 'message' %}
-    def __setitem__(self, {{ field.key_field.cython_type }} key, {{ field.value_field.cython_type }} value):
-        cdef {{ field.cython_type }}* map_instance = self._instance.mutable_{{ field.cpp_name }}()
-        cdef {{ field.key_field.cpp_type }} key_value = key{{ field.key_field.encode_suffix }}
-        dereference(map_instance)[key_value] = value{{ field.value_field.decode_suffix }}
+    def __setitem__(self, {{ field.key_field.local_cython_type(file.module) }} key, {{ field.value_field.local_cpp_type(file.module) }} value):
+        cdef {{ field.local_cpp_type(file.module) }}* map_instance = self._instance.mutable_{{ field.cpp_name }}()
+        cdef {{ field.key_field.local_cpp_type(file.module) }} key_value = key{{ field.key_field.encode_suffix }}
+        dereference(map_instance)[key_value] = {{ field.value_field.decode_function }}(value)
         {%- endif %}
 
     {%- endfor %}
@@ -242,17 +216,17 @@ cdef class {{ cdef_class.name }}(cytobuf.protobuf.message.Message):
         self.{{ field.name }} = __{{ cdef_class.name }}__{{ field.name }}__container()
     {%- endfor %}
         if _init:
-            instance = new _Cpp_{{ cdef_class.name }}()
+            instance = new {{ cdef_class.name.name }}()
     {%- for field in cdef_class.fields if field.repeated or field.is_map %}
             self.{{ field.name }}._instance = instance
     {%- endfor %}
             self._internal = instance
 
-    cdef _Cpp_{{ cdef_class.name }}* _message(self):
-        return <_Cpp_{{ cdef_class.name }}*>self._internal
+    cdef {{ cdef_class.name.name }}* _message(self):
+        return <{{ cdef_class.name.name }}*>self._internal
 
     @staticmethod
-    cdef from_cpp(_Cpp_{{ cdef_class.name }}* other):
+    cdef from_cpp({{ cdef_class.name.name }}* other):
         result = {{ cdef_class.name }}(_init=False)
         result._internal = other   
     {%- for field in cdef_class.fields if field.repeated or field.is_map %}
@@ -268,10 +242,10 @@ cdef class {{ cdef_class.name }}(cytobuf.protobuf.message.Message):
 
     @property
     def {{ field.name }}(self):
-        return self._message().{{ field.cpp_name }}(){{ field.decode_suffix }}
+        return {{ field.decode_function }}(self._message().{{ field.cpp_name }}())
 
     @{{ field.name }}.setter
-    def {{ field.name }}(self, {{ field.cython_type }} value):
+    def {{ field.name }}(self, {{ field.local_cython_type(file.module) }} value):
         self._message().set_{{ field.cpp_name }}(value{{ field.encode_suffix }})
         {%- else %}
 
@@ -292,53 +266,62 @@ cdef class {{ cdef_class.name }}(cytobuf.protobuf.message.Message):
 message_pyx_template = Template(MESSAGE_PYX_TEMPLATE)
 
 
+PY_ENUM_TEMPLATE = """\
+from enum import Enum
+
+{%- for enum in file.enums %}
+
+class {{ enum.name }}(Enum):
+    {%- for value in enum.value_names %}
+    {{ value.name.fully_unwrapped }} = {{ value.number }}
+    {%- endfor %}
+{%- endfor %}
+"""
+
+
+py_enum_template = Template(PY_ENUM_TEMPLATE)
+
+
 PY_MODULE_TEMPLATE = """\
-{%- for import in file.extern_imports if import.module.proto_module %}
-from {{ import.module.python_module }} import {{ import.symbol.name }}
+import _merged_cython_protos
+{%- for class in file.classes %}
+from {{ file.module.cython_module }} import {{ class.name }} as _cy_{{ class.name }}
 {%- endfor %}
 {%- for enum in file.enums %}
-from {{ enum.module.python_module }} import {{ enum.name.name }}
-{{ enum.name }} = {{ enum.name.name }}
-{%- endfor %}
-{%- for class in file.classes %}
-from {{ file.module.cython_module }} import {{ class.name }} as _Cy_{{ class.name }}
+from {{ file.module.enum_module.python_module }} import {{ enum.name }} as _cy_{{ enum.name }}
 {%- endfor %}
 
-{%- for class in file.classes %}
+{%- for enum in file.enums if enum.exported %}
+{{ enum.name.name }} = _cy_{{ enum.name }}
+{%- endfor %}
+
+{%- for class in file.classes if class.exported %}
     {%- if class.nested_names %}
 
-class {{ class.name.name }}(_Cy_{{ class.name }}):
+class {{ class.name.name }}(_cy_{{ class.name }}):
         {%- for name in class.nested_names %}
-    {{ name.name.name }} = {{ name.name }}
+    {{ name.fully_unwrapped }} = _cy_{{ name }}
         {%- endfor %}
     {%- else %}
 
-{{ class.name.name }} = _Cy_{{ class.name }}
+{{ class.name.name }} = _cy_{{ class.name }}
     {%- endif %}
 {%- endfor %}
 
 {%- for enum in file.enums %}
-del {{ enum.name }}
-    {%- if not enum.exported %}
-del {{ enum.name.name }}
-    {%- endif %}
+del _cy_{{ enum.name }}
 {%- endfor %}
 {%- for class in file.classes %}
-del _Cy_{{ class.name }}
-     {%- if not class.nested_names and not class.exported %}
-del {{ class.name.name }}
-     {%- endif %}
+del _cy_{{ class.name }}
 {%- endfor %}
-{%- for import in file.extern_imports if import.module.proto_module %}
-del {{ import.symbol.name }}
-{%- endfor %}
+del _merged_cython_protos
 
 __all__ = (
 {%- for enum in file.enums if enum.exported %}
-    '{{ enum.raw_name }}',
+    '{{ enum.fully_unwrapped }}',
 {%- endfor %}
 {%- for class in file.classes if class.exported %}
-    '{{ class.name.raw_name }}',
+    '{{ class.name.fully_unwrapped }}',
 {%- endfor %}
 )
 """
@@ -348,6 +331,7 @@ py_module_template = Template(PY_MODULE_TEMPLATE)
 
 
 SETUP_PY_TEMPLATE = """\
+import multiprocessing
 from setuptools import find_packages
 from setuptools import setup
 from Cython.Build import cythonize
@@ -360,6 +344,7 @@ EXTENSIONS = cythonize(
 {%- endfor %}
     ],
     language_level="3",
+    nthreads=multiprocessing.cpu_count(),
 )
 
 
@@ -376,3 +361,13 @@ setup(
 
 
 setup_py_template = Template(SETUP_PY_TEMPLATE)
+
+
+MERGED_PYX_MODULE_TEMLATE = (
+    PYX_HEADER
+    + """\
+# distutils: sources = {{ files|map(attribute='cpp_source')|join(' ') }}
+    """
+)
+
+merged_pyx_template = Template(MERGED_PYX_MODULE_TEMLATE)

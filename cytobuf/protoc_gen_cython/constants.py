@@ -1,3 +1,33 @@
+from google.protobuf.descriptor_pb2 import FieldDescriptorProto
+
+DEFAULT_LIBRARY_DIRECTORY = "/usr/local/lib"
+DEFAULT_INCLUDE_DIRECTORY = "/usr/local/include"
+
+
+INT_TYPES = {
+    FieldDescriptorProto.TYPE_INT32,
+    FieldDescriptorProto.TYPE_UINT32,
+    FieldDescriptorProto.TYPE_FIXED32,
+    FieldDescriptorProto.TYPE_SFIXED32,
+    FieldDescriptorProto.TYPE_SINT32,
+}
+
+LONG_TYPES = {
+    FieldDescriptorProto.TYPE_INT64,
+    FieldDescriptorProto.TYPE_UINT64,
+    FieldDescriptorProto.TYPE_FIXED64,
+    FieldDescriptorProto.TYPE_SFIXED64,
+    FieldDescriptorProto.TYPE_SINT64,
+}
+
+UNSIGNED_TYPES = {
+    FieldDescriptorProto.TYPE_UINT64,
+    FieldDescriptorProto.TYPE_UINT32,
+    FieldDescriptorProto.TYPE_FIXED32,
+    FieldDescriptorProto.TYPE_FIXED64,
+}
+
+
 CPP_KEYWORDS = {
     "NULL",
     "alignas",

@@ -6,7 +6,6 @@ from google.protobuf import json_format
 from google.protobuf.descriptor_pb2 import FileDescriptorProto
 
 from cytobuf.protoc_gen_cython import ProtoFile
-from cytobuf.protoc_gen_cython.templates import externs_pxd_template
 from cytobuf.protoc_gen_cython.templates import message_pxd_template
 from cytobuf.protoc_gen_cython.templates import message_pyx_template
 from cytobuf.protoc_gen_cython.templates import py_module_template
@@ -126,22 +125,25 @@ def pxd_file():
     return next(x for x in parsed_files if x.proto_filename == "pb/people/models/people.proto")
 
 
-def test_extern_pxd_render(pxd_file):
+def test_message_pxd_render(pxd_file):
     expected = textwrap.dedent(
         """\
     # cython: language_level=3
     # distutils: language = c++
-    from pb.address.models._address__cy_pb2_externs cimport Address as pb_address_models_Address
-    from libcpp.string cimport string as string
     cimport cytobuf.protobuf.common
+    cimport cytobuf.protobuf.message
+    from pb.address.models._address__cy_pb2 cimport Address as _cpp_pb_address_models_Address
+    from pb.address.models._address__cy_pb2 cimport pb_address_models_Address
+    from libcpp.string cimport string
+
 
     cdef extern from "pb/people/models/people.pb.h" namespace "pb::people::models":
 
-        cdef enum Person_PhoneType:
+        cpdef enum Person_PhoneType:
             Person_PhoneType_MOBILE,
             Person_PhoneType_HOME,
             Person_PhoneType_WORK,
-
+    
         cdef cppclass Person_PhoneNumber(cytobuf.protobuf.common.Message):
             Person_PhoneNumber()
             void clear_number()
@@ -150,7 +152,7 @@ def test_extern_pxd_render(pxd_file):
             void clear_type()
             Person_PhoneType type()
             void set_type(Person_PhoneType) except +
-
+    
         cdef cppclass Person(cytobuf.protobuf.common.Message):
             Person()
             void clear_name()
@@ -168,39 +170,25 @@ def test_extern_pxd_render(pxd_file):
             size_t phones_size() const
             Person_PhoneNumber* add_phones()
             void clear_address()
-            const pb_address_models_Address& address()
-            pb_address_models_Address* mutable_address()
+            const _cpp_pb_address_models_Address& address()
+            _cpp_pb_address_models_Address* mutable_address()
             bint has_address() const;
-    """
-    )
-    actual = externs_pxd_template.render(file=pxd_file)
-    assert expected.strip() == actual.strip()
-
-
-def test_message_pxd_render(pxd_file):
-    expected = textwrap.dedent(
-        """\
-    # cython: language_level=3
-    # distutils: language = c++
-    cimport cytobuf.protobuf.message
-    from pb.people.models._people__cy_pb2_externs cimport Person_PhoneNumber as _Cpp_pb_people_models_Person_PhoneNumber
-    from pb.people.models._people__cy_pb2_externs cimport Person as _Cpp_pb_people_models_Person
 
     cdef class pb_people_models_Person_PhoneNumber(cytobuf.protobuf.message.Message):
-        cdef _Cpp_pb_people_models_Person_PhoneNumber* _message(self)
+        cdef Person_PhoneNumber* _message(self)
 
         @staticmethod
-        cdef from_cpp(_Cpp_pb_people_models_Person_PhoneNumber* other)
+        cdef from_cpp(Person_PhoneNumber* other)
 
     cdef class __pb_people_models_Person__phones__container:
-        cdef _Cpp_pb_people_models_Person* _instance
+        cdef Person* _instance
 
     cdef class pb_people_models_Person(cytobuf.protobuf.message.Message):
         cdef readonly __pb_people_models_Person__phones__container phones
-        cdef _Cpp_pb_people_models_Person* _message(self)
+        cdef Person* _message(self)
 
         @staticmethod
-        cdef from_cpp(_Cpp_pb_people_models_Person* other)
+        cdef from_cpp(Person* other)
     """
     )
 
@@ -217,39 +205,36 @@ def test_message_pyx_render(pxd_file):
         # distutils: include_dirs = /usr/local/include .
         # distutils: library_dirs = /usr/local/lib
         # distutils: extra_compile_args= -std=c++11
-        # distutils: sources = pb/people/models/people.pb.cc
 
         cimport cytobuf.protobuf.message
+        from pb.address.models._address__cy_pb2 cimport Address as _cpp_pb_address_models_Address
         from pb.address.models._address__cy_pb2 cimport pb_address_models_Address
-        from pb.address.models._address__cy_pb2_externs cimport Address as _Cpp_pb_address_models_Address
-        from pb.people.models._cy_enums._people_Person_PhoneType__cy_pb2 cimport pb_people_models_Person_PhoneType
+        from pb.people.models._enums.people_pb2 import pb_people_models_Person_PhoneType as _py_pb_people_models_Person_PhoneType
         from libcpp.string cimport string
-        from pb.people.models._people__cy_pb2_externs cimport Person_PhoneNumber as _Cpp_pb_people_models_Person_PhoneNumber
-        from pb.people.models._people__cy_pb2_externs cimport Person as _Cpp_pb_people_models_Person
 
         cdef class pb_people_models_Person_PhoneNumber(cytobuf.protobuf.message.Message):
 
             def __cinit__(self, _init = True):
                 if _init:
-                    instance = new _Cpp_pb_people_models_Person_PhoneNumber()
+                    instance = new Person_PhoneNumber()
                     self._internal = instance
 
-            cdef _Cpp_pb_people_models_Person_PhoneNumber* _message(self):
-                return <_Cpp_pb_people_models_Person_PhoneNumber*>self._internal
+            cdef Person_PhoneNumber* _message(self):
+                return <Person_PhoneNumber*>self._internal
 
             @staticmethod
-            cdef from_cpp(_Cpp_pb_people_models_Person_PhoneNumber* other):
+            cdef from_cpp(Person_PhoneNumber* other):
                 result = pb_people_models_Person_PhoneNumber(_init=False)
                 result._internal = other
                 return result
 
             @property
             def number(self):
-                return self._message().number().decode('utf-8')
+                return bytes.decode(self._message().number())
 
             @number.setter
             def number(self, str value):
-                self._message().set_number(value.encode('utf-8'))
+                self._message().set_number(value.encode())
 
             @number.deleter
             def number(self):
@@ -257,10 +242,10 @@ def test_message_pyx_render(pxd_file):
 
             @property
             def type(self):
-                return self._message().type()
+                return _py_pb_people_models_Person_PhoneType(self._message().type())
 
             @type.setter
-            def type(self, pb_people_models_Person_PhoneType value):
+            def type(self, Person_PhoneType value):
                 self._message().set_type(value)
 
             @type.deleter
@@ -270,7 +255,7 @@ def test_message_pyx_render(pxd_file):
         cdef class __pb_people_models_Person__phones__container:
 
             def __iter__(self):
-                cdef int i
+                cdef size_t i
                 for i in range(self._instance.phones_size()):
                     yield pb_people_models_Person_PhoneNumber.from_cpp(self._instance.mutable_phones(i))
 
@@ -278,12 +263,14 @@ def test_message_pyx_render(pxd_file):
                 return self._instance.phones_size()
 
             def __getitem__(self, key):
-                cdef int size, index, start, stop, step
+                cdef size_t size, index
+                cdef int start, stop, step
                 size = self._instance.phones_size()
                 if isinstance(key, int):
-                    index = key
-                    if index < 0:
-                        index = size + index
+                    if key < 0:
+                        index = size + key
+                    else:
+                        index = key
                     if not 0 <= index < size:
                         raise IndexError(f"list index ({key}) out of range")
                     return pb_people_models_Person_PhoneNumber.from_cpp(self._instance.mutable_phones(index))
@@ -302,15 +289,15 @@ def test_message_pyx_render(pxd_file):
             def __cinit__(self, _init = True):
                 self.phones = __pb_people_models_Person__phones__container()
                 if _init:
-                    instance = new _Cpp_pb_people_models_Person()
+                    instance = new Person()
                     self.phones._instance = instance
                     self._internal = instance
 
-            cdef _Cpp_pb_people_models_Person* _message(self):
-                return <_Cpp_pb_people_models_Person*>self._internal
+            cdef Person* _message(self):
+                return <Person*>self._internal
 
             @staticmethod
-            cdef from_cpp(_Cpp_pb_people_models_Person* other):
+            cdef from_cpp(Person* other):
                 result = pb_people_models_Person(_init=False)
                 result._internal = other
                 result.phones._instance = other
@@ -318,11 +305,11 @@ def test_message_pyx_render(pxd_file):
 
             @property
             def name(self):
-                return self._message().name().decode('utf-8')
+                return bytes.decode(self._message().name())
 
             @name.setter
             def name(self, str value):
-                self._message().set_name(value.encode('utf-8'))
+                self._message().set_name(value.encode())
 
             @name.deleter
             def name(self):
@@ -330,7 +317,7 @@ def test_message_pyx_render(pxd_file):
 
             @property
             def id(self):
-                return self._message().id()
+                return (self._message().id())
 
             @id.setter
             def id(self, int value):
@@ -342,11 +329,11 @@ def test_message_pyx_render(pxd_file):
 
             @property
             def email(self):
-                return self._message().email().decode('utf-8')
+                return bytes.decode(self._message().email())
 
             @email.setter
             def email(self, str value):
-                self._message().set_email(value.encode('utf-8'))
+                self._message().set_email(value.encode())
 
             @email.deleter
             def email(self):
@@ -368,23 +355,18 @@ def test_message_pyx_render(pxd_file):
 def test_py_module_render(pxd_file):
     expected = textwrap.dedent(
         """\
-        from pb.address.models.address_pb2 import Address
-        from pb.people.models._cy_enums._people_Person_PhoneType__cy_pb2 import Person_PhoneType
-        pb_people_models_Person_PhoneType = Person_PhoneType
-        from pb.people.models._people__cy_pb2 import pb_people_models_Person_PhoneNumber as _Cy_pb_people_models_Person_PhoneNumber
-        from pb.people.models._people__cy_pb2 import pb_people_models_Person as _Cy_pb_people_models_Person
+        import _merged_cython_protos
+        from pb.people.models._people__cy_pb2 import pb_people_models_Person_PhoneNumber as _cy_pb_people_models_Person_PhoneNumber
+        from pb.people.models._people__cy_pb2 import pb_people_models_Person as _cy_pb_people_models_Person
+        from pb.people.models._enums.people_pb2 import pb_people_models_Person_PhoneType as _cy_pb_people_models_Person_PhoneType
 
-        Person_PhoneNumber = _Cy_pb_people_models_Person_PhoneNumber
-
-        class Person(_Cy_pb_people_models_Person):
-            PhoneNumber = Person_PhoneNumber
-            PhoneType = Person_PhoneType
-        del pb_people_models_Person_PhoneType
-        del Person_PhoneType
-        del _Cy_pb_people_models_Person_PhoneNumber
-        del Person_PhoneNumber
-        del _Cy_pb_people_models_Person
-        del Address
+        class Person(_cy_pb_people_models_Person):
+            PhoneNumber = _cy_pb_people_models_Person_PhoneNumber
+            PhoneType = _cy_pb_people_models_Person_PhoneType
+        del _cy_pb_people_models_Person_PhoneType
+        del _cy_pb_people_models_Person_PhoneNumber
+        del _cy_pb_people_models_Person
+        del _merged_cython_protos
 
         __all__ = (
             'Person',
@@ -398,6 +380,7 @@ def test_py_module_render(pxd_file):
 def test_setup_py_render(pxd_file):
     expected = textwrap.dedent(
         """\
+        import multiprocessing
         from setuptools import find_packages
         from setuptools import setup
         from Cython.Build import cythonize
@@ -408,6 +391,7 @@ def test_setup_py_render(pxd_file):
                 'pb/people/models/_people__cy_pb2.pyx',
             ],
             language_level="3",
+            nthreads=multiprocessing.cpu_count(),
         )
 
 

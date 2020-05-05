@@ -52,13 +52,6 @@ repos:
     -   id: python-no-eval
     -   id: python-no-log-warn
     -   id: rst-backticks
--   repo: local
-    hooks:
-    -   id: no-f-strings-without-variables
-        name: no f-strings without variables
-        entry: '\bf"[^{]+"'
-        language: pygrep
-        types: [python]
 -   repo: https://github.com/pre-commit/mirrors-mypy
     rev: v0.770
     hooks:

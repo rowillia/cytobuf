@@ -8,8 +8,10 @@
 
 from libcpp.string cimport string
 
-from cytobuf.protobuf.common cimport MessageDifferencer
+from cytobuf.protobuf.common cimport JsonParseOptions
+from cytobuf.protobuf.common cimport JsonPrintOptions
 from cytobuf.protobuf.common cimport JsonStringToMessage
+from cytobuf.protobuf.common cimport MessageDifferencer
 from cytobuf.protobuf.common cimport MessageToJsonString
 
 
@@ -28,12 +30,23 @@ cdef class Message:
         self._internal.SerializeToString(&result)
         return result
 
-    def FromJsonString(self, bytes data):
-        JsonStringToMessage(data, self._internal)
+    def FromJsonString(self, bytes data, bint ignore_unknown_fields = False):
+        cdef JsonParseOptions args = JsonParseOptions()
+        args.ignore_unknown_fields = ignore_unknown_fields
+        JsonStringToMessage(data, self._internal, args)
 
-    def ToJsonString(self):
+    def ToJsonString(
+            self,
+            bint including_default_value_fields = False,
+            bint preserving_proto_field_name = False,
+            bint use_integers_for_enums = False,
+    ):
         cdef string result = string()
-        MessageToJsonString(self._internal[0], &result)
+        cdef JsonPrintOptions args = JsonPrintOptions()
+        args.preserve_proto_field_names = preserving_proto_field_name
+        args.always_print_primitive_fields = including_default_value_fields
+        args.always_print_enums_as_ints = use_integers_for_enums
+        MessageToJsonString(self._internal[0], &result, args)
         return result.decode('utf-8')
 
     def ParseFromString(self, bytes data):

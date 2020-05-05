@@ -68,5 +68,15 @@ cdef extern from "google/protobuf/stubs/status.h" namespace "google::protobuf::u
 
 
 cdef extern from "google/protobuf/util/json_util.h" namespace "google::protobuf::util":
-    cdef Status MessageToJsonString(const Message & message, string* output)
-    cdef Status JsonStringToMessage(const char* input, Message* output)
+    cdef struct JsonPrintOptions:
+        bint add_whitespace
+        bint always_print_primitive_fields
+        bint always_print_enums_as_ints
+        bint preserve_proto_field_names
+
+    cdef struct JsonParseOptions:
+        bint ignore_unknown_fields
+        bint case_insensitive_enum_parsing
+
+    cdef Status MessageToJsonString(const Message &, string*, const JsonPrintOptions &)
+    cdef Status JsonStringToMessage(const char*, Message*, const JsonParseOptions &)

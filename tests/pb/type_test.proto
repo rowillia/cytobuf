@@ -46,4 +46,5 @@ message TypeTester {
     map<string, SubMessage> map_to_submessage_value = 20;
     map<string, string> map_to_string_value = 21;
     string operator = 22;
+    bool camelCaseVariable = 23;
 }
